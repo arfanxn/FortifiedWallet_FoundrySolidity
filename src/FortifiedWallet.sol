@@ -47,7 +47,6 @@ contract FortifiedWallet is ReentrancyGuard {
                     State variables
     ////////////////////////////////////////////////*/
 
-    bytes32 private passwordHash;
     /// @dev The signers of the wallet
     mapping(address => bool) private s_signers;
     /// @dev The minimum number of approvals required to execute a transaction
