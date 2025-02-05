@@ -7,7 +7,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 // import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 // import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
-contract FortifiedWallet is ReentrancyGuard {
+contract Wallet is ReentrancyGuard {
     /*////////////////////////////////////////////////
                         Errors
     ////////////////////////////////////////////////*/
