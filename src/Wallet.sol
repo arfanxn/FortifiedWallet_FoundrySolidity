@@ -2,20 +2,30 @@
 pragma solidity ^0.8.20;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {DynamicPriceConsumer} from "src/DynamicPriceConsumer.sol";
+import {HelperConfig} from "src/HelperConfig.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-// import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-// import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+
+interface IERC20Metadata is IERC20 {
+    function name() external view returns (string memory);
+    function symbol() external view returns (string memory);
+    function decimals() external view returns (uint8);
+}
 
 contract Wallet is ReentrancyGuard {
-    /*////////////////////////////////////////////////
-                        Errors
-    ////////////////////////////////////////////////*/
+    HelperConfig private immutable config;
+
+    //==============================================================
+    //                           Errors
+    //==============================================================
 
     // Errors related to validation
     error MustUseFunctionCall();
     error MustBeGreaterThanZero();
     error MustBeNonZeroAddress();
+    error MustMatchEtherValue();
     error InsufficientUnlockedBalance();
 
     // Errors related to wallet configuration
@@ -38,19 +48,27 @@ contract Wallet is ReentrancyGuard {
     error TransactionLacksApprovals();
     error TransactionFailed();
 
-    /*////////////////////////////////////////////////
-                        Libraries
-    ////////////////////////////////////////////////*/
+    //==============================================================
+    //                           Libraries
+    //==============================================================
     using SafeERC20 for IERC20;
 
-    /*////////////////////////////////////////////////
-                    State variables
-    ////////////////////////////////////////////////*/
+    //==============================================================
+    //                       State variables
+    //==============================================================
 
+    /// @dev The name of the wallet
+    string private s_name;
+    /// @dev Mapping of signer addresses to their signer status
+    mapping(address => bool) private s_isSigner;
     /// @dev The signers of the wallet
-    mapping(address => bool) private s_signers;
+    address[] private s_signers;
     /// @dev The minimum number of approvals required to execute a transaction
-    uint256 private s_minimumApprovalsRequired;
+    uint256 private s_minimumApprovals;
+    /// @dev Stores the tokens that the wallet is holding
+    address[] private s_tokens;
+    /// @dev Tracks existing tokens to avoid duplicates
+    mapping(address => bool) private s_tokenExists;
     /// @dev The amount of each ERC20 token (or ETH if address(0)) that is currently locked (i.e. not transferable)
     mapping(address => uint256) private s_lockedBalances;
 
@@ -58,17 +76,17 @@ contract Wallet is ReentrancyGuard {
     struct Transaction {
         // Unique identifier for the transaction
         bytes32 hash;
+        // Token address if the transaction involves an ERC20 token transfer.
+        /// @dev If address(0) it means it is an ETH transaction not an ERC20 transaction.
+        address token;
         // Address to which the transaction will be sent
         address to;
         // Ether value to be transferred in the transaction
         uint256 value;
-        // Token address if the transaction involves an ERC20 token transfer.
-        /// @dev If address(0) it means it is an ETH transaction not an ERC20 transaction.
-        address token;
         // Number of approvals the transaction has received
         uint8 approvalCount;
-        // Mapping of signer addresses to their approval status for this transaction
-        mapping(address => bool) approvals;
+        /// @dev Mapping of approver addresses to their approval status
+        mapping(address => bool) hasApproved;
         // Timestamp when the transaction was created
         uint256 createdAt;
         // Timestamp when the transaction was executed
@@ -84,13 +102,13 @@ contract Wallet is ReentrancyGuard {
     /// @dev The hash of the most recently created transaction
     bytes32 private s_lastTransactionHash;
 
-    /*////////////////////////////////////////////////
-                        Enums
-    ////////////////////////////////////////////////*/
+    //==============================================================
+    //                           Enums
+    //==============================================================
 
-    /*////////////////////////////////////////////////
-                        Events
-    ////////////////////////////////////////////////*/
+    //==============================================================
+    //                           Events
+    //==============================================================
 
     event TransactionCreated(
         bytes32 indexed txHash,
@@ -114,9 +132,9 @@ contract Wallet is ReentrancyGuard {
         uint256 value
     );
 
-    /*////////////////////////////////////////////////
-                        Modifiers
-    ////////////////////////////////////////////////*/
+    //==============================================================
+    //                           Modifiers
+    //==============================================================
 
     /// @dev Ensures that the value is greater than zero.
     modifier greaterThanZero(uint256 value) {
@@ -132,7 +150,7 @@ contract Wallet is ReentrancyGuard {
 
     /// @dev Ensures the caller is a signer.
     modifier onlySigner() {
-        if (!s_signers[msg.sender]) revert OnlySigner();
+        if (!s_isSigner[msg.sender]) revert OnlySigner();
         _;
     }
 
@@ -145,14 +163,14 @@ contract Wallet is ReentrancyGuard {
 
     /// @dev Ensures the transaction is not already approved by the given approver.
     modifier txNotApprovedBy(bytes32 txHash, address approver) {
-        if (s_transactions[txHash].approvals[approver] == true)
+        if (s_transactions[txHash].hasApproved[approver] == true)
             revert TransactionAlreadyApproved();
         _;
     }
 
     /// @dev Ensures the transaction is not already revoked by the given revoker.
     modifier txNotRevokedBy(bytes32 txHash, address revoker) {
-        if (s_transactions[txHash].approvals[revoker] == false)
+        if (s_transactions[txHash].hasApproved[revoker] == false)
             revert TransactionAlreadyRevoked();
         _;
     }
@@ -173,14 +191,14 @@ contract Wallet is ReentrancyGuard {
 
     /// @dev Ensures the transaction has the required number of approvals.
     modifier txDoesNotLackApprovals(bytes32 txHash) {
-        if (s_transactions[txHash].approvalCount < s_minimumApprovalsRequired)
+        if (s_transactions[txHash].approvalCount < s_minimumApprovals)
             revert TransactionLacksApprovals();
         _;
     }
 
-    /*////////////////////////////////////////////////
-                    Init functions
-    ////////////////////////////////////////////////*/
+    //==============================================================
+    //                       Init functions
+    //==============================================================
 
     /**
      * @dev Initializes the fortified wallet contract.
@@ -193,7 +211,14 @@ contract Wallet is ReentrancyGuard {
      * - The value of `_minimumApprovalsRequired` must be greater than 1.
      * - The value of `_minimumApprovalsRequired` must be less than or equal to the length of the `_signers` array.
      */
-    constructor(address[] memory _signers, uint256 _minimumApprovalsRequired) {
+    constructor(
+        HelperConfig _config,
+        string memory name,
+        address[] memory _signers,
+        uint256 _minimumApprovalsRequired
+    ) {
+        config = _config;
+        s_name = name;
         uint256 signersLength = _signers.length;
         if (signersLength < 2) revert InsufficientSigners();
         // Limiting the number of signers to 10 is a trade-off between decentralization
@@ -209,20 +234,21 @@ contract Wallet is ReentrancyGuard {
             address _signer = _signers[i];
 
             if (_signer == address(0)) revert MustBeNonZeroAddress();
-            if (s_signers[_signer] != false) revert DuplicateSigners();
+            if (s_isSigner[_signer] != false) revert DuplicateSigners();
 
-            s_signers[_signer] = true;
+            s_isSigner[_signer] = true;
+            s_signers.push(_signer);
         }
-        s_minimumApprovalsRequired = _minimumApprovalsRequired;
+        s_minimumApprovals = _minimumApprovalsRequired;
     }
 
-    /*////////////////////////////////////////////////
-                    Internal functions
-    ////////////////////////////////////////////////*/
+    //==============================================================
+    //                       Internal functions
+    //==============================================================
 
-    /*////////////////////////////////////////////////
-                    External functions
-    ////////////////////////////////////////////////*/
+    //==============================================================
+    //                       External functions
+    //==============================================================
     /// @notice Reverts any Ether sent to the contract.
     /// @dev This function is required to prevent Ether from being sent to the
     /// contract. To deposit Ether or ERC20 tokens, use the `deposit` function
@@ -245,9 +271,19 @@ contract Wallet is ReentrancyGuard {
         address token,
         uint256 value
     ) external payable greaterThanZero(value) nonReentrant {
-        if (token == address(0) && msg.value > 0) {
+        address etherAddress = address(0);
+
+        // If token is not Ether (i.e. it's an ERC20 token), then `msg.value` must be zero.
+        // Otherwise, if `msg.value` is not zero, then we must be depositing Ether, not an ERC20 token.
+        bool tokenIsNotEther = token != etherAddress;
+        bool msgValueIsNotZero = msg.value != 0;
+        if (tokenIsNotEther && msgValueIsNotZero) revert MustUseFunctionCall();
+
+        if (token == etherAddress) {
+            if (msg.value != value) revert MustMatchEtherValue();
             emit Deposited(msg.sender, value);
         } else {
+            // TODO: implements safeTransferFrom instead of transferFrom
             bool success = IERC20(token).transferFrom(
                 msg.sender,
                 address(this),
@@ -256,6 +292,11 @@ contract Wallet is ReentrancyGuard {
             if (!success) revert DepositFailed();
             emit ERC20Deposited(msg.sender, address(token), value);
         }
+
+        // If the token has not already been added to the array of tokens, add it.
+        // This is done to keep track of all the tokens that have been deposited
+        // into the wallet.
+        if (!s_tokenExists[token]) s_tokens.push(token);
     }
 
     /// @notice Locks the specified Ether and/or ERC20 tokens in the wallet, so
@@ -320,15 +361,15 @@ contract Wallet is ReentrancyGuard {
     /// @notice The transaction will not be executed until enough approvals
     /// have been received.
     function createTransaction(
+        address token,
         address to,
-        uint value,
-        address token
-    ) external onlySigner nonReentrant {
+        uint256 value
+    ) external onlySigner nonReentrant returns (bytes32 txHash) {
         uint256 timestamp = block.timestamp;
 
         bool isTokenTransaction = token != address(0);
 
-        bytes32 txHash = keccak256(
+        txHash = keccak256(
             abi.encodePacked(
                 to,
                 isTokenTransaction ? 0 : value,
@@ -343,8 +384,8 @@ contract Wallet is ReentrancyGuard {
         _transaction.to = to;
         _transaction.value = value;
         _transaction.token = isTokenTransaction ? token : address(0); // `address(0)` Indicates Ether transfer
-        _transaction.approvalCount = 0;
-        _transaction.approvals[msg.sender] = true;
+        _transaction.approvalCount = 1;
+        _transaction.hasApproved[msg.sender] = true;
         _transaction.createdAt = timestamp;
         _transaction.executedAt = 0;
         _transaction.cancelledAt = 0;
@@ -358,6 +399,8 @@ contract Wallet is ReentrancyGuard {
             _transaction.value,
             _transaction.token
         );
+
+        return _transaction.hash;
     }
 
     /// @notice Approve a transaction.
@@ -375,7 +418,7 @@ contract Wallet is ReentrancyGuard {
         txNotExecuted(txHash)
     {
         Transaction storage transaction = s_transactions[txHash];
-        transaction.approvals[msg.sender] = true;
+        transaction.hasApproved[msg.sender] = true;
         transaction.approvalCount++;
 
         emit TransactionApproved(txHash, msg.sender);
@@ -396,8 +439,8 @@ contract Wallet is ReentrancyGuard {
         txNotExecuted(txHash)
     {
         Transaction storage transaction = s_transactions[txHash];
-        transaction.approvals[msg.sender] = false;
-        delete transaction.approvals[msg.sender];
+        transaction.hasApproved[msg.sender] = false;
+        delete transaction.hasApproved[msg.sender];
         transaction.approvalCount--;
 
         emit TransactionRevoked(txHash, msg.sender);
@@ -471,9 +514,80 @@ contract Wallet is ReentrancyGuard {
         emit TransactionExecuted(txHash, msg.sender);
     }
 
-    /*////////////////////////////////////////////////
-                    Getter functions
-    ////////////////////////////////////////////////*/
+    //==============================================================
+    //                       Getter functions
+    //==============================================================
+
+    /// @notice Returns the list of signers who have approved a transaction
+    /// @param txHash The hash of the transaction to get the approvers for
+    /// @return approvers The list of signers who have approved the transaction
+    function _getTransactionApprovers(
+        bytes32 txHash
+    ) private view returns (address[] memory approvers) {
+        Transaction storage transaction = s_transactions[txHash];
+        address[] memory signers = s_signers;
+        uint256 signersLength = signers.length;
+        approvers = new address[](signersLength);
+
+        uint256 approversIndex = 0;
+        for (uint256 i = 0; i < signersLength; i++) {
+            address signer = signers[i];
+            if (transaction.hasApproved[signer] == true) {
+                approvers[approversIndex] = signer;
+                approversIndex++;
+            }
+        }
+    }
+
+    /// @dev Returns the name of the wallet
+    /// @return The name of the wallet
+    function getName() public view returns (string memory) {
+        return s_name;
+    }
+
+    function getMinimumApprovals() public view returns (uint256) {
+        return s_minimumApprovals;
+    }
+
+    /// @notice Returns the total balance of the wallet in USD
+    /// @return usdTotal The total balance of the wallet in USD with 18 zeros (eg: 1 USD = 1,000,000,000,000,000,000 = 1e18)
+    function getTotalBalance() public view returns (uint256 usdTotal) {
+        address[] memory tokens = s_tokens;
+        uint256 tokensLength = tokens.length;
+        for (uint256 i = 0; i < tokensLength; i++) {
+            address token = tokens[i];
+            bool isEtherToken = token == address(0);
+
+            uint256 balance = isEtherToken
+                ? address(this).balance
+                : IERC20(token).balanceOf(address(this));
+            uint8 tokenDecimals = isEtherToken
+                ? 18
+                : IERC20Metadata(token).decimals();
+
+            AggregatorV3Interface priceFeed = DynamicPriceConsumer(
+                config.getPriceConsumer()
+            ).fetchPriceFeed(token);
+
+            (, int256 price, , , ) = priceFeed.latestRoundData();
+            uint8 priceFeedDecimals = priceFeed.decimals();
+
+            // Adjust decimals for calculation
+            uint256 adjustedPrice = uint256(price) *
+                (10 ** (18 - priceFeedDecimals)); // Scale to 18 decimals
+            uint256 adjustedBalance = balance * (10 ** (18 - tokenDecimals)); // Scale to 18 decimals
+
+            // Calculate USD value (balance * price)
+            uint256 usdValue = (adjustedBalance * adjustedPrice) / 1e18; // Divide by 1e18 to normalize
+            usdTotal += usdValue;
+        }
+
+        return usdTotal;
+    }
+
+    function getSigners() public view returns (address[] memory) {
+        return s_signers;
+    }
 
     /// @dev Returns a transaction based on its hash
     function getTransaction(
@@ -482,21 +596,26 @@ contract Wallet is ReentrancyGuard {
         public
         view
         returns (
+            bytes32,
+            address token,
             address to,
             uint256 value,
-            address token,
             uint256 approvalCount,
+            address[] memory approvers,
             uint256 createdAt,
             uint256 executedAt,
             uint256 cancelledAt
         )
     {
         Transaction storage transaction = s_transactions[txHash];
+        approvers = _getTransactionApprovers(txHash);
         return (
+            txHash,
+            transaction.token,
             transaction.to,
             transaction.value,
-            transaction.token,
             transaction.approvalCount,
+            approvers,
             transaction.createdAt,
             transaction.executedAt,
             transaction.cancelledAt
