@@ -47,7 +47,7 @@ contract WalletFactory {
     //==============================================================
 
     /// @notice Retrieves the array of wallets associated with a particular signer.
-    function getWalletsBySigner(
+    function getWalletAddressesBySigner(
         address signer
     ) public view returns (address[] memory) {
         return s_signerToWallets[signer];
