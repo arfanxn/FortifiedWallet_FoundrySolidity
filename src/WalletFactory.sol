@@ -22,6 +22,7 @@ contract WalletFactory {
         address[] memory _signers,
         uint256 _minimumApprovalsRequired
     ) public returns (address) {
+        // TODO: implements maximum created wallet limitation
         // Create a new Wallet instance
         Wallet wallet = new Wallet(
             config,
@@ -46,11 +47,53 @@ contract WalletFactory {
     //                      Getter functions
     //==============================================================
 
-    /// @notice Retrieves the array of wallets associated with a particular signer.
+    /// @notice Retrieves the list of wallet addresses created by a specific signer.
+    /// @param signer The address of the signer whose wallets are being queried.
+    /// @param offset The starting index in the wallet list from which to retrieve wallet addresses.
+    /// @param limit The maximum number of wallet addresses to retrieve.
+    /// @return walletAddressResults An array of wallet addresses created by the specified signer.
     function getWalletAddressesBySigner(
-        address signer
-    ) public view returns (address[] memory) {
-        return s_signerToWallets[signer];
+        address signer,
+        uint256 offset,
+        uint256 limit
+    ) public view returns (address[] memory walletAddressResults) {
+        // Initialize the return array with the specified limit
+        walletAddressResults = new address[](limit);
+
+        // Get the array of wallets associated with the specified signer
+        address[] memory walletAddresses = s_signerToWallets[signer];
+
+        // Get the length of the array of wallets
+        uint256 walletAddressesLength = walletAddresses.length;
+
+        // Calculate the end index of the slice of the array of wallets to return
+        // If the end index exceeds the length of the array, set it to the length
+        uint256 end = offset + limit;
+        if (end > walletAddressesLength) end = walletAddressesLength;
+
+        // Initialize the index of the return array
+        uint256 walletAddressResultsIndex = 0;
+
+        // Iterate over the slice of the array of wallets from the offset to the end index
+        for (uint256 i = offset; i < end; i++) {
+            // Set the wallet address at the current index of the return array
+            // to the wallet address at the current index of the array of wallets
+            walletAddressResults[walletAddressResultsIndex] = walletAddresses[
+                i
+            ];
+
+            // Increment the index of the return array
+            walletAddressResultsIndex++;
+        }
+
+        // Set the length of the return array to the number of wallet addresses
+        // that were actually set
+        assembly {
+            mstore(walletAddressResults, walletAddressResultsIndex)
+        }
+
+        // Return the array of wallet addresses
+        return walletAddressResults;
     }
 
     /// @notice Retrieves the details of a wallet given its address.
@@ -60,7 +103,7 @@ contract WalletFactory {
     /// @return signers The array of signers associated with the wallet.
     /// @return minimumApprovals The minimum approvals required for the wallet.
     /// @return totalBalance The total balance of the wallet in USD, scaled to 1e18.
-    function getWalletDetails(
+    function getWallet(
         address payable _address
     )
         public
