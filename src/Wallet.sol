@@ -73,7 +73,7 @@ contract Wallet is ReentrancyGuard {
     mapping(address => uint256) private s_lockedBalances;
 
     /// @notice Represents a transaction to be executed by the wallet
-    struct Transaction {
+    struct TransactionStorage {
         // Unique identifier for the transaction
         bytes32 hash;
         // Token address if the transaction involves an ERC20 token transfer.
@@ -95,8 +95,31 @@ contract Wallet is ReentrancyGuard {
         uint256 cancelledAt;
     }
 
+    /// @notice Structure containing detailed information about a specific transaction
+    /// @dev This structure is used by the wallet to provide comprehensive transaction data
+    struct TransactionView {
+        /// @notice Unique identifier for the transaction
+        bytes32 hash;
+        /// @notice Address of the ERC20 token involved in the transaction, or address(0) for ETH
+        address token;
+        /// @notice Recipient address for the transaction
+        address to;
+        /// @notice Amount of Ether or tokens to be transferred
+        uint256 value;
+        /// @notice Number of approvals the transaction has received
+        uint8 approvalCount;
+        /// @notice List of addresses that have approved the transaction
+        address[] approvers;
+        /// @notice Timestamp when the transaction was created
+        uint256 createdAt;
+        /// @notice Timestamp when the transaction was executed
+        uint256 executedAt;
+        /// @notice Timestamp when the transaction was cancelled
+        uint256 cancelledAt;
+    }
+
     /// @dev Maps transaction hashes to their respective transactions
-    mapping(bytes32 => Transaction) private s_transactions;
+    mapping(bytes32 => TransactionStorage) private s_transactions;
     /// @dev Stores all transaction hashes in the order they were created
     bytes32[] private s_transactionHashes;
     /// @dev The hash of the most recently created transaction
@@ -283,13 +306,12 @@ contract Wallet is ReentrancyGuard {
             if (msg.value != value) revert MustMatchEtherValue();
             emit Deposited(msg.sender, value);
         } else {
-            // TODO: implements safeTransferFrom instead of transferFrom
-            bool success = IERC20(token).transferFrom(
+            SafeERC20.safeTransferFrom(
+                IERC20(token),
                 msg.sender,
                 address(this),
                 value
             );
-            if (!success) revert DepositFailed();
             emit ERC20Deposited(msg.sender, address(token), value);
         }
 
@@ -378,7 +400,7 @@ contract Wallet is ReentrancyGuard {
                 timestamp
             )
         );
-        Transaction storage _transaction = s_transactions[txHash];
+        TransactionStorage storage _transaction = s_transactions[txHash];
 
         _transaction.hash = txHash;
         _transaction.to = to;
@@ -417,7 +439,7 @@ contract Wallet is ReentrancyGuard {
         txNotApprovedBy(txHash, msg.sender)
         txNotExecuted(txHash)
     {
-        Transaction storage transaction = s_transactions[txHash];
+        TransactionStorage storage transaction = s_transactions[txHash];
         transaction.hasApproved[msg.sender] = true;
         transaction.approvalCount++;
 
@@ -438,7 +460,7 @@ contract Wallet is ReentrancyGuard {
         txNotRevokedBy(txHash, msg.sender)
         txNotExecuted(txHash)
     {
-        Transaction storage transaction = s_transactions[txHash];
+        TransactionStorage storage transaction = s_transactions[txHash];
         transaction.hasApproved[msg.sender] = false;
         delete transaction.hasApproved[msg.sender];
         transaction.approvalCount--;
@@ -453,7 +475,7 @@ contract Wallet is ReentrancyGuard {
     function cancelTransaction(
         bytes32 txHash
     ) public onlySigner txExists(txHash) txNotExecuted(txHash) {
-        Transaction storage transaction = s_transactions[txHash];
+        TransactionStorage storage transaction = s_transactions[txHash];
         transaction.cancelledAt = block.timestamp;
 
         emit TransactionCancelled(txHash, msg.sender);
@@ -474,7 +496,7 @@ contract Wallet is ReentrancyGuard {
         uint256 timestamp = block.timestamp;
 
         // Update the transaction state
-        Transaction storage transaction = s_transactions[txHash];
+        TransactionStorage storage transaction = s_transactions[txHash];
         transaction.executedAt = timestamp;
 
         // Check if the transaction is an ERC20 token transfer
@@ -524,7 +546,7 @@ contract Wallet is ReentrancyGuard {
     function _getTransactionApprovers(
         bytes32 txHash
     ) private view returns (address[] memory approvers) {
-        Transaction storage transaction = s_transactions[txHash];
+        TransactionStorage storage transaction = s_transactions[txHash];
         address[] memory signers = s_signers;
         uint256 signersLength = signers.length;
         approvers = new address[](signersLength);
@@ -592,34 +614,51 @@ contract Wallet is ReentrancyGuard {
     /// @dev Returns a transaction based on its hash
     function getTransaction(
         bytes32 txHash
-    )
-        public
-        view
-        returns (
-            bytes32,
-            address token,
-            address to,
-            uint256 value,
-            uint256 approvalCount,
-            address[] memory approvers,
-            uint256 createdAt,
-            uint256 executedAt,
-            uint256 cancelledAt
-        )
-    {
-        Transaction storage transaction = s_transactions[txHash];
-        approvers = _getTransactionApprovers(txHash);
-        return (
-            txHash,
-            transaction.token,
-            transaction.to,
-            transaction.value,
-            transaction.approvalCount,
-            approvers,
-            transaction.createdAt,
-            transaction.executedAt,
-            transaction.cancelledAt
-        );
+    ) public view returns (TransactionView memory transactionView) {
+        TransactionStorage storage transaction = s_transactions[txHash];
+        address[] memory approvers = _getTransactionApprovers(txHash);
+        transactionView = TransactionView({
+            hash: txHash,
+            token: transaction.token,
+            to: transaction.to,
+            value: transaction.value,
+            approvalCount: transaction.approvalCount,
+            approvers: approvers,
+            createdAt: transaction.createdAt,
+            executedAt: transaction.executedAt,
+            cancelledAt: transaction.cancelledAt
+        });
+    }
+
+    function getNewestTransactions(
+        uint256 offset,
+        uint256 limit
+    ) public view returns (TransactionView[] memory transactionsViews) {
+        uint256 transactionHashesLength = s_transactionHashes.length;
+
+        // Calculate available transactions after applying the offset
+        uint256 available = transactionHashesLength > offset
+            ? transactionHashesLength - offset
+            : 0;
+
+        // Determine the actual number of transactions to return
+        uint256 resultSize = available > limit ? limit : available;
+
+        transactionsViews = new TransactionView[](resultSize);
+
+        // Fetch transactions in reverse order (newest first)
+        for (uint256 i = 0; i < resultSize; i++) {
+            // Calculate index: start from the end, apply offset, and iterate backward
+            uint256 index = transactionHashesLength - 1 - offset - i;
+
+            // Gracefully handle invalid indices by returning empty
+            if (index >= transactionHashesLength) {
+                return new TransactionView[](0);
+            }
+
+            bytes32 transactionHash = s_transactionHashes[index];
+            transactionsViews[i] = getTransaction(transactionHash);
+        }
     }
 
     /// @dev Returns the hash of the most recently created transaction
