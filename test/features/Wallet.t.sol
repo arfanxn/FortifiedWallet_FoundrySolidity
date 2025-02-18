@@ -234,11 +234,12 @@ contract WalletTest is BaseTest {
                 ? 0
                 : tokenAddressesIndex;
             address tokenAddr = tokenAddresses[tokenAddressesIndex];
+            uint256 randomAmount = (i + 1) * (10 ** 18);
             // Create a transaction with the current token address and increment the value by 1 ether
             transactionHashes[i] = wallet.createTransaction(
                 tokenAddr,
                 to,
-                (i + 1) * (10 ** 18)
+                randomAmount
             );
 
             tokenAddressesIndex++;
