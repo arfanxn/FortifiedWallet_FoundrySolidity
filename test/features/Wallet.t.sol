@@ -10,13 +10,10 @@ import {WalletFactory} from "src/WalletFactory.sol";
 import {Wallet} from "src/Wallet.sol";
 
 contract WalletTest is BaseTest {
-    WalletFactory public factory;
     Wallet public wallet;
 
     function setUp() public override {
         super.setUp();
-
-        factory = WalletFactory(config.getWalletFactory());
     }
 
     modifier createWallet(

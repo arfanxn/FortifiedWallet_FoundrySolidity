@@ -7,6 +7,7 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
 import {HelperConfig} from "src/HelperConfig.sol";
 import {IDeployer} from "script/interfaces/IDeployer.sol";
 import {Deployer} from "script/Deployer.s.sol";
+import {WalletFactory} from "src/WalletFactory.sol";
 import {IDynamicPriceConsumer} from "src/interfaces/IDynamicPriceConsumer.sol";
 
 /// @title Base Test Contract
@@ -39,6 +40,8 @@ contract BaseTest is Test {
     /// @notice Dynamic Price Consumer
     IDynamicPriceConsumer internal dynamicPriceConsumer;
 
+    WalletFactory internal factory;
+
     /// @notice Returns the main account address
     /// @return address The main account address
     function _getMainAccount() internal view returns (address) {
@@ -60,6 +63,8 @@ contract BaseTest is Test {
 
         // Initialize the dynamic price consumer
         dynamicPriceConsumer = IDynamicPriceConsumer(config.getPriceConsumer());
+
+        factory = WalletFactory(config.getWalletFactory());
     }
 
     modifier initAccounts(uint256 accountsCount) {

@@ -5,12 +5,8 @@ import {BaseTest} from "test/features/Base.t.sol";
 import {WalletFactory} from "src/WalletFactory.sol";
 
 contract WalletFactoryTest is BaseTest {
-    WalletFactory public factory;
-
     function setUp() public override {
         super.setUp();
-
-        factory = WalletFactory(config.getWalletFactory());
     }
 
     function testCreateWallet() public initAccounts(2) fundAccounts {
