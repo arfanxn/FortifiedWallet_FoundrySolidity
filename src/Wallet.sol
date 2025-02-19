@@ -2,17 +2,11 @@
 pragma solidity ^0.8.20;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {DynamicPriceConsumer} from "src/DynamicPriceConsumer.sol";
+import {PriceUtils} from "src/libraries/PriceUtils.sol";
+import {IDynamicPriceConsumer} from "src/interfaces/IDynamicPriceConsumer.sol";
 import {HelperConfig} from "src/HelperConfig.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
-
-interface IERC20Metadata is IERC20 {
-    function name() external view returns (string memory);
-    function symbol() external view returns (string memory);
-    function decimals() external view returns (uint8);
-}
 
 contract Wallet is ReentrancyGuard {
     HelperConfig private immutable config;
@@ -46,6 +40,7 @@ contract Wallet is ReentrancyGuard {
     error TransactionAlreadyCancelled();
     error TransactionNotCancelled();
     error TransactionLacksApprovals();
+    error TransactionInsufficientUnlockedBalance();
     error TransactionFailed();
 
     //==============================================================
@@ -69,8 +64,8 @@ contract Wallet is ReentrancyGuard {
     address[] private s_tokens;
     /// @dev Tracks existing tokens to avoid duplicates
     mapping(address => bool) private s_tokenExists;
-    /// @dev The amount of each ERC20 token (or ETH if address(0)) that is currently locked (i.e. not transferable)
-    mapping(address => uint256) private s_lockedBalances;
+    /// @dev Tracks the total locked balance of the wallet in USD
+    uint256 private s_totalLockedBalanceInUsd;
 
     /// @notice Represents a transaction to be executed by the wallet
     struct TransactionStorage {
@@ -321,55 +316,34 @@ contract Wallet is ReentrancyGuard {
         if (!s_tokenExists[token]) s_tokens.push(token);
     }
 
-    /// @notice Locks the specified Ether and/or ERC20 tokens in the wallet, so
-    /// that they cannot be transferred or executed.
-    /// @param _tokens The array of ERC20 tokens to be locked. If Ether, set it to address(0).
-    /// @param _balances The array of amounts of Ether and/or ERC20 tokens to be locked.
-    /// @dev This function can be used to lock Ether and/or ERC20 tokens in the wallet.
-    /// @dev Only the owner of the wallet can lock Ether and/or ERC20 tokens.
-    function lockBalances(
-        address[] memory _tokens,
-        uint256[] memory _balances
+    /**
+     * @notice Locks a specified amount of USD in the wallet.
+     * @param usdAmount The amount of USD to lock.
+     * @dev The total locked balance cannot exceed the maximum uint256 value.
+     */
+    function lockBalancedInUsd(
+        uint256 usdAmount
     ) external onlySigner nonReentrant {
-        // TODO: implement locking authentication
-
-        for (uint256 i = 0; i < _tokens.length; i++) {
-            address _token = _tokens[i];
-            uint256 _balance = _balances[i];
-
-            if (_token == address(0)) {
-                // If Ether, set the address to 0
-                s_lockedBalances[address(0)] = _balance;
-                continue;
-            }
-
-            s_lockedBalances[_token] = _balance;
+        if (usdAmount >= type(uint256).max) {
+            s_totalLockedBalanceInUsd = getTotalBalance();
+        } else {
+            s_totalLockedBalanceInUsd += usdAmount;
         }
     }
 
-    /// @notice Unlocks the specified Ether and/or ERC20 tokens in the wallet, so
-    /// that they can be transferred or executed.
-    /// @param _tokens The array of ERC20 tokens to be unlocked. If Ether, set it to address(0).
-    /// @param _balances The array of amounts of Ether and/or ERC20 tokens to be unlocked.
-    /// @dev This function can be used to unlock Ether and/or ERC20 tokens in the wallet.
-    /// @dev Only the owner of the wallet can unlock Ether and/or ERC20 tokens.
-    function unlockBalances(
-        address[] memory _tokens,
-        uint256[] memory _balances
+    /**
+     * @notice Unlocks a specified amount of USD in the wallet.
+     * @param usdAmount The amount of USD to unlock.
+     * @dev The total locked balance cannot be less than zero.
+     */
+    function unlockBalanceInUsd(
+        uint256 usdAmount
     ) external onlySigner nonReentrant {
-        // TODO: implement unlocking authentication
-
-        for (uint256 i = 0; i < _tokens.length; i++) {
-            address _token = _tokens[i];
-            uint256 _balance = _balances[i];
-
-            if (_token == address(0)) {
-                // If Ether, set the address to 0
-                s_lockedBalances[address(0)] = _balance;
-                continue;
-            }
-
-            s_lockedBalances[_token] = _balance;
+        // TODO: Add verification to unlock
+        if (usdAmount >= type(uint256).max) {
+            s_totalLockedBalanceInUsd = 0;
+        } else {
+            s_totalLockedBalanceInUsd -= usdAmount;
         }
     }
 
@@ -480,7 +454,11 @@ contract Wallet is ReentrancyGuard {
 
         emit TransactionCancelled(txHash, msg.sender);
     }
-
+    /// @notice Execute a transaction.
+    /// @param txHash The hash of the transaction to be executed.
+    /// @dev This function can be used to execute a transaction if it has not
+    /// been executed yet and has enough approvals.
+    /// @notice Only a signer of the transaction can execute it.
     function executeTransaction(
         bytes32 txHash
     )
@@ -500,21 +478,38 @@ contract Wallet is ReentrancyGuard {
         transaction.executedAt = timestamp;
 
         // Check if the transaction is an ERC20 token transfer
-        bool isTokenTransaction = transaction.token != address(0);
+        bool isEtherTransaction = transaction.token != address(0);
 
-        // Get the total balance of the token, and the locked balance
-        uint256 totalBalance = isTokenTransaction
-            ? IERC20(transaction.token).balanceOf(address(this))
-            : address(this).balance;
-        uint256 lockedBalance = s_lockedBalances[transaction.token];
-        uint256 unlockedBalance = totalBalance - lockedBalance;
+        // Fetch the price consumer instance to use to fetch the price feed
+        IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
+            config.getPriceConsumer()
+        );
+
+        // Calculate the wallet total balance in USD
+        uint256 totalBalanceInUsd = getTotalBalance();
+
+        // Calculate the wallet total locked balance in USD
+        uint256 totalLockedBalanceInUsd = s_totalLockedBalanceInUsd;
+
+        // Calculate the wallet total unlocked balance in USD
+        uint256 totalUnlockedBalanceInUsd = totalLockedBalanceInUsd >
+            totalBalanceInUsd
+            ? 0
+            : totalBalanceInUsd - totalLockedBalanceInUsd;
+
+        // Calculate the USD value of the transaction
+        uint256 valueInUsd = PriceUtils.getUsdValue(
+            transaction.token,
+            transaction.value,
+            priceConsumer
+        );
 
         // Revert if the transaction value exceeds the unlocked balance
-        if (transaction.value > unlockedBalance)
-            revert InsufficientUnlockedBalance();
+        if (valueInUsd > totalUnlockedBalanceInUsd)
+            revert TransactionInsufficientUnlockedBalance();
 
         // Execute the transaction based on its type
-        if (!isTokenTransaction) {
+        if (!isEtherTransaction) {
             // For ETH transactions, call the recipient address with the specified value
             (bool success, ) = transaction.to.call{value: transaction.value}(
                 ""
@@ -523,13 +518,14 @@ contract Wallet is ReentrancyGuard {
             if (!success) revert TransactionFailed();
         } else {
             // For ERC20 transactions, transfer the specified amount to the recipient address
-            bool success = IERC20(transaction.token).transferFrom(
+            SafeERC20.safeTransferFrom(
+                IERC20(transaction.token),
                 address(this),
                 transaction.to,
                 transaction.value
             );
             // Revert if the transaction fails
-            if (!success) revert TransactionFailed();
+            // if (!success) revert TransactionFailed();
         }
 
         // Emit the TransactionExecuted event
@@ -583,24 +579,15 @@ contract Wallet is ReentrancyGuard {
             uint256 balance = isEtherToken
                 ? address(this).balance
                 : IERC20(token).balanceOf(address(this));
-            uint8 tokenDecimals = isEtherToken
-                ? 18
-                : IERC20Metadata(token).decimals();
 
-            AggregatorV3Interface priceFeed = DynamicPriceConsumer(
+            IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
                 config.getPriceConsumer()
-            ).fetchPriceFeed(token);
-
-            (, int256 price, , , ) = priceFeed.latestRoundData();
-            uint8 priceFeedDecimals = priceFeed.decimals();
-
-            // Adjust decimals for calculation
-            uint256 adjustedPrice = uint256(price) *
-                (10 ** (18 - priceFeedDecimals)); // Scale to 18 decimals
-            uint256 adjustedBalance = balance * (10 ** (18 - tokenDecimals)); // Scale to 18 decimals
-
-            // Calculate USD value (balance * price)
-            uint256 usdValue = (adjustedBalance * adjustedPrice) / 1e18; // Divide by 1e18 to normalize
+            );
+            uint256 usdValue = PriceUtils.getUsdValue(
+                token,
+                balance,
+                priceConsumer
+            );
             usdTotal += usdValue;
         }
 
