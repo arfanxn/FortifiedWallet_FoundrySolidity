@@ -31,16 +31,39 @@ contract Deployer is Script, IDeployer {
         return config;
     }
 
+    /**
+     * @dev Deploys the contracts for the mainnet environment.
+     * 1. Deploy the PriceConsumer
+     * 2. Deploy the WalletFactory
+     */
     function _runMainnet() private {
-        // TODO: complete mainnet deployment
+        IDeployer[] memory deployers = new IDeployer[](2);
+        deployers[0] = new DeployPriceConsumer(config);
+        deployers[1] = new DeployWalletFactory(config);
+        _executeDeployers(deployers);
     }
 
+    /**
+     * @dev Deploys the contracts for the local environment.
+     * 1. Deploy the mock tokens (USDC, WETH, MKR)
+     * 2. Deploy the mock V3Aggregator
+     * 3. Deploy the PriceConsumer
+     * 4. Deploy the WalletFactory
+     */
     function _runLocal() private {
         IDeployer[] memory deployers = new IDeployer[](4);
         deployers[0] = new DeployMockTokens(config);
         deployers[1] = new DeployMockV3Aggregator(config);
         deployers[2] = new DeployPriceConsumer(config);
         deployers[3] = new DeployWalletFactory(config);
+        _executeDeployers(deployers);
+    }
+
+    /**
+     * @dev Runs the deployers in the given array.
+     * @param deployers The deployers to run.
+     */
+    function _executeDeployers(IDeployer[] memory deployers) private {
         for (uint256 i = 0; i < deployers.length; i++) {
             config.grantRole(config.OWNER_ROLE(), address(deployers[i]));
             deployers[i].run();
