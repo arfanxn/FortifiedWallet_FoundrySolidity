@@ -20,7 +20,6 @@ contract Wallet is ReentrancyGuard {
     error MustBeGreaterThanZero();
     error MustBeNonZeroAddress();
     error MustMatchEtherValue();
-    error InsufficientUnlockedBalance();
 
     // Errors related to wallet configuration
     error InsufficientSigners();
