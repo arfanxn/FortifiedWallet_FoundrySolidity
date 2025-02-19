@@ -5,7 +5,13 @@ import {HelperConfig} from "src/HelperConfig.sol";
 import {Wallet} from "src/Wallet.sol";
 
 contract WalletFactory {
+    /// @notice Error thrown when a user attempts to create more than the maximum
+    /// allowed number of wallets.
+    error WalletExceededMaximum();
+
     HelperConfig private immutable config;
+
+    uint256 constant MAX_WALLETS_PER_ACCOUNT = 10;
 
     /// @dev Mapping of signers to the wallets they have created.
     mapping(address signer => address[] wallets) private s_signerToWallets;
@@ -17,12 +23,23 @@ contract WalletFactory {
         config = _config;
     }
 
+    /**
+     * @notice Creates a new wallet with the specified name, signers and minimum approvals required.
+     * @param name The name of the wallet to create.
+     * @param _signers The array of signers associated with the wallet.
+     * @param _minimumApprovalsRequired The minimum approvals required for a transaction to be executed.
+     * @return The address of the newly created wallet.
+     */
     function createWallet(
         string memory name,
         address[] memory _signers,
         uint256 _minimumApprovalsRequired
     ) public returns (address) {
-        // TODO: implements maximum created wallet limitation
+        address mainSigner = _signers[0];
+        uint256 walletsLength = s_signerToWallets[mainSigner].length;
+        if (walletsLength >= MAX_WALLETS_PER_ACCOUNT)
+            revert WalletExceededMaximum();
+
         // Create a new Wallet instance
         Wallet wallet = new Wallet(
             config,
