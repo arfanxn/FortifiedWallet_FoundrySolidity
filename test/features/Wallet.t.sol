@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-// import {SendPackedUserOp, PackedUserOperation, IEntryPoint} from "script/SendPackedUserOp.s.sol";
-// import {ZkSyncChainChecker} from "lib/foundry-devops/src/ZkSyncChainChecker.sol";
-// import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {PriceUtils} from "src/libraries/PriceUtils.sol";
+import {IDynamicPriceConsumer} from "src/interfaces/IDynamicPriceConsumer.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {BaseTest} from "test/features/Base.t.sol";
-import {WalletFactory} from "src/WalletFactory.sol";
 import {Wallet} from "src/Wallet.sol";
 
 contract WalletTest is BaseTest {
@@ -343,6 +341,65 @@ contract WalletTest is BaseTest {
             to.balance,
             ACCOUNT_INITIAL_ETH + amount,
             "Recipient's balance should be updated after execution"
+        );
+    }
+
+    function testExecuteEthTransactionBalanceLocked()
+        public
+        initAccounts(4)
+        fundAccounts
+        createWallet("", 3, 3)
+    {
+        address[] memory signers = wallet.getSigners();
+        address token = address(0);
+        address to = accounts[3];
+        uint256 amount = 1e18;
+        uint256 usdAmount = PriceUtils.getUsdValue(
+            token,
+            amount,
+            IDynamicPriceConsumer(config.getPriceConsumer())
+        );
+
+        // Deposit Ether into the wallet
+        vm.startPrank(_getMainAccount());
+        wallet.deposit{value: amount}(token, amount);
+        // Create a transaction in the wallet
+        bytes32 txHash = wallet.createTransaction(token, to, amount);
+        vm.stopPrank();
+
+        // Approve the transaction with all the signers
+        for (uint256 i = 1; i < signers.length; i++) {
+            vm.prank(signers[i]);
+            // Approve the transaction with each signer
+            wallet.approveTransaction(txHash);
+        }
+
+        assertEq(
+            address(wallet).balance,
+            amount,
+            "Wallet's balance should remain the same before execution"
+        );
+        assertEq(
+            to.balance,
+            ACCOUNT_INITIAL_ETH,
+            "Recipient's balance should remain the same before execution"
+        );
+
+        vm.startPrank(_getMainAccount());
+        wallet.lockBalancedInUsd(usdAmount);
+        vm.expectRevert(Wallet.TransactionInsufficientUnlockedBalance.selector);
+        wallet.executeTransaction(txHash);
+        vm.stopPrank();
+
+        assertEq(
+            address(wallet).balance,
+            amount,
+            "Wallet's balance should remain the same after execution due to InsufficientUnlockedBalance revert"
+        );
+        assertEq(
+            to.balance,
+            ACCOUNT_INITIAL_ETH,
+            "Recipient's balance should remain the same after execution due to InsufficientUnlockedBalance revert"
         );
     }
 }
