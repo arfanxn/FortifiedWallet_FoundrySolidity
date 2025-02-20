@@ -5,16 +5,25 @@ import {HelperConfig} from "src/HelperConfig.sol";
 import {Wallet} from "src/Wallet.sol";
 
 contract WalletFactory {
+    error WalletDoesNotExist();
     /// @notice Error thrown when a user attempts to create more than the maximum
     /// allowed number of wallets.
     error WalletExceededMaximum();
 
     HelperConfig private immutable config;
 
-    uint256 constant MAX_WALLETS_PER_ACCOUNT = 10;
+    uint256 public constant MAX_WALLETS_PER_ACCOUNT = 10;
 
     /// @dev Mapping of signers to the wallets they have created.
     mapping(address signer => address[] wallets) private s_signerToWallets;
+
+    struct WalletView {
+        string name;
+        address addr;
+        address[] signers;
+        uint256 minimumApprovals;
+        uint256 totalBalanceInUsd;
+    }
 
     /// @dev Event emitted when a new wallet is created
     event WalletCreated(address indexed wallet, address[] signers);
@@ -64,80 +73,74 @@ contract WalletFactory {
     //                      Getter functions
     //==============================================================
 
-    /// @notice Retrieves the list of wallet addresses created by a specific signer.
-    /// @param signer The address of the signer whose wallets are being queried.
-    /// @param offset The starting index in the wallet list from which to retrieve wallet addresses.
-    /// @param limit The maximum number of wallet addresses to retrieve.
-    /// @return walletAddressResults An array of wallet addresses created by the specified signer.
     function getWalletAddressesBySigner(
         address signer,
         uint256 offset,
         uint256 limit
-    ) public view returns (address[] memory walletAddressResults) {
-        // Initialize the return array with the specified limit
-        walletAddressResults = new address[](limit);
-
-        // Get the array of wallets associated with the specified signer
+    ) public view returns (address[] memory results) {
         address[] memory walletAddresses = s_signerToWallets[signer];
-
-        // Get the length of the array of wallets
         uint256 walletAddressesLength = walletAddresses.length;
 
-        // Calculate the end index of the slice of the array of wallets to return
-        // If the end index exceeds the length of the array, set it to the length
+        uint256 available = walletAddressesLength > offset
+            ? walletAddressesLength - offset
+            : 0;
+
+        uint256 size = available > limit ? limit : available;
         uint256 end = offset + limit;
         if (end > walletAddressesLength) end = walletAddressesLength;
 
-        // Initialize the index of the return array
-        uint256 walletAddressResultsIndex = 0;
+        results = new address[](size);
+        uint256 resultsIndex = 0;
 
-        // Iterate over the slice of the array of wallets from the offset to the end index
         for (uint256 i = offset; i < end; i++) {
-            // Set the wallet address at the current index of the return array
-            // to the wallet address at the current index of the array of wallets
-            walletAddressResults[walletAddressResultsIndex] = walletAddresses[
-                i
-            ];
-
-            // Increment the index of the return array
-            walletAddressResultsIndex++;
+            address walletAddress = walletAddresses[i];
+            results[resultsIndex] = walletAddress;
+            resultsIndex++;
         }
-
-        // Set the length of the return array to the number of wallet addresses
-        // that were actually set
-        assembly {
-            mstore(walletAddressResults, walletAddressResultsIndex)
-        }
-
-        // Return the array of wallet addresses
-        return walletAddressResults;
     }
 
-    /// @notice Retrieves the details of a wallet given its address.
-    /// @param _address The address of the wallet to retrieve details for.
-    /// @return walletName The name of the wallet.
-    /// @return walletAddress The address of the wallet.
-    /// @return signers The array of signers associated with the wallet.
-    /// @return minimumApprovals The minimum approvals required for the wallet.
-    /// @return totalBalance The total balance of the wallet in USD, scaled to 1e18.
+    /**
+     * @notice Returns a WalletView object of the wallet at the specified address
+     * @param walletAddress The address of the wallet to retrieve
+     * @return walletView The WalletView object of the wallet at the specified address
+     */
     function getWallet(
-        address payable _address
-    )
-        public
-        view
-        returns (
-            string memory walletName,
-            address walletAddress,
-            address[] memory signers,
-            uint256 minimumApprovals,
-            uint256 totalBalance
-        )
-    {
-        Wallet wallet = Wallet(_address);
-        walletAddress = _address;
-        walletName = wallet.getName();
-        signers = wallet.getSigners();
-        minimumApprovals = wallet.getMinimumApprovals();
-        totalBalance = wallet.getTotalBalance();
+        address payable walletAddress
+    ) public view returns (WalletView memory walletView) {
+        Wallet wallet = Wallet(walletAddress);
+        if (walletAddress == address(0)) revert WalletDoesNotExist();
+        walletView = WalletView({
+            name: wallet.getName(),
+            addr: walletAddress,
+            signers: wallet.getSigners(),
+            minimumApprovals: wallet.getMinimumApprovals(),
+            totalBalanceInUsd: wallet.getTotalBalanceInUsd()
+        });
+    }
+
+    function getWalletsBySigner(
+        address signer,
+        uint256 offset,
+        uint256 limit
+    ) public view returns (WalletView[] memory results) {
+        address[] memory walletAddresses = s_signerToWallets[signer];
+        uint256 walletAddressesLength = walletAddresses.length;
+
+        uint256 available = walletAddressesLength > offset
+            ? walletAddressesLength - offset
+            : 0;
+
+        uint256 size = available > limit ? limit : available;
+        uint256 end = offset + limit;
+        if (end > walletAddressesLength) end = walletAddressesLength;
+
+        results = new WalletView[](size);
+        uint256 resultsIndex = 0;
+
+        for (uint256 i = offset; i < end; i++) {
+            address walletAddress = walletAddresses[i];
+            results[resultsIndex] = getWallet(payable(walletAddress));
+            resultsIndex++;
+        }
     }
 }
