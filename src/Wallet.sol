@@ -39,6 +39,7 @@ contract Wallet is ReentrancyGuard {
     error TransactionAlreadyCancelled();
     error TransactionNotCancelled();
     error TransactionLacksApprovals();
+    error TransactionInsufficientBalance();
     error TransactionInsufficientUnlockedBalance();
     error TransactionFailed();
 
@@ -51,6 +52,8 @@ contract Wallet is ReentrancyGuard {
     //                       State variables
     //==============================================================
 
+    uint256 public constant MIN_SIGNERS_REQUIRED = 2;
+    uint256 public constant MAX_SIGNERS_ALLOWED = 10;
     /// @dev The name of the wallet
     string private s_name;
     /// @dev Mapping of signer addresses to their signer status
@@ -148,6 +151,8 @@ contract Wallet is ReentrancyGuard {
         address indexed token,
         uint256 value
     );
+    event WalletBalanceLocked(address indexed signer, uint256 usdAmount);
+    event WalletBalanceUnlocked(address indexed signer, uint256 usdAmount);
 
     //==============================================================
     //                           Modifiers
@@ -230,19 +235,19 @@ contract Wallet is ReentrancyGuard {
      */
     constructor(
         HelperConfig _config,
-        string memory name,
+        string memory _name,
         address[] memory _signers,
         uint256 _minimumApprovalsRequired
     ) {
         config = _config;
-        s_name = name;
+        s_name = _name;
         uint256 signersLength = _signers.length;
-        if (signersLength < 2) revert InsufficientSigners();
+        if (signersLength < MIN_SIGNERS_REQUIRED) revert InsufficientSigners();
         // Limiting the number of signers to 10 is a trade-off between decentralization
         // and gas efficiency. With more than 10 signers, the cost of creating a new
         // transaction would be prohibitive. Given that the wallet is intended to be
         // used by a small group of trusted parties, 10 signers should be sufficient.
-        if (signersLength > 10) revert ExcessiveSigners();
+        if (signersLength > MAXIMUM_SIGNERS) revert ExcessiveSigners();
         if (_minimumApprovalsRequired < 2) revert InsufficientSigners();
         if (_minimumApprovalsRequired > signersLength)
             revert ExcessiveSigners();
@@ -323,11 +328,18 @@ contract Wallet is ReentrancyGuard {
     function lockBalancedInUsd(
         uint256 usdAmount
     ) external onlySigner nonReentrant {
+        // If usdAmount is the maximum uint256 value, lock the entire wallet balance.
+        // Otherwise, add usdAmount to the total locked balance.
         if (usdAmount >= type(uint256).max) {
-            s_totalLockedBalanceInUsd = getTotalBalance();
+            // Set the total locked balance to the entire wallet balance.
+            usdAmount = getTotalBalanceInUsd();
+            s_totalLockedBalanceInUsd = usdAmount;
         } else {
+            // Add usdAmount to the total locked balance.
             s_totalLockedBalanceInUsd += usdAmount;
         }
+        // Emit an event to notify that the wallet balance has been locked.
+        emit WalletBalanceLocked(msg.sender, usdAmount);
     }
 
     /**
@@ -338,12 +350,24 @@ contract Wallet is ReentrancyGuard {
     function unlockBalanceInUsd(
         uint256 usdAmount
     ) external onlySigner nonReentrant {
-        // TODO: Add verification to unlock
-        if (usdAmount >= type(uint256).max) {
+        // TODO: Add authentication to unlock
+        // If usdAmount is greater than or equal to the total locked balance,
+        // or if usdAmount is the maximum uint256 value, unlock the entire
+        // locked balance.
+        // Otherwise, subtract usdAmount from the total locked balance.
+        if (
+            usdAmount >= type(uint256).max ||
+            usdAmount >= s_totalLockedBalanceInUsd
+        ) {
+            // Unlock the entire locked balance.
+            usdAmount = s_totalLockedBalanceInUsd;
             s_totalLockedBalanceInUsd = 0;
         } else {
+            // Subtract usdAmount from the total locked balance.
             s_totalLockedBalanceInUsd -= usdAmount;
         }
+        // Emit an event to notify that the wallet balance has been unlocked.
+        emit WalletBalanceUnlocked(msg.sender, usdAmount);
     }
 
     /// @notice Creates a new transaction.
@@ -362,14 +386,13 @@ contract Wallet is ReentrancyGuard {
     ) external onlySigner nonReentrant returns (bytes32 txHash) {
         uint256 timestamp = block.timestamp;
 
-        bool isTokenTransaction = token != address(0);
+        bool isEtherTransaction = token == address(0);
 
         txHash = keccak256(
-            abi.encodePacked(
+            abi.encode(
+                isEtherTransaction ? address(0) : token,
                 to,
-                isTokenTransaction ? 0 : value,
-                isTokenTransaction ? token : address(0),
-                isTokenTransaction ? value : 0,
+                isEtherTransaction ? 0 : value,
                 timestamp
             )
         );
@@ -378,7 +401,7 @@ contract Wallet is ReentrancyGuard {
         _transaction.hash = txHash;
         _transaction.to = to;
         _transaction.value = value;
-        _transaction.token = isTokenTransaction ? token : address(0); // `address(0)` Indicates Ether transfer
+        _transaction.token = isEtherTransaction ? address(0) : token; // `address(0)` Indicates Ether transfer
         _transaction.approvalCount = 1;
         _transaction.hasApproved[msg.sender] = true;
         _transaction.createdAt = timestamp;
@@ -477,7 +500,14 @@ contract Wallet is ReentrancyGuard {
         transaction.executedAt = timestamp;
 
         // Check if the transaction is an ERC20 token transfer
-        bool isEtherTransaction = transaction.token != address(0);
+        bool isEtherTransaction = transaction.token == address(0);
+
+        // Fetch the balance of the token or ether in the contract
+        uint256 balance = isEtherTransaction
+            ? address(this).balance // For ETH transactions, use the contract's ether balance
+            : IERC20(transaction.token).balanceOf(address(this));
+        if (balance < transaction.value)
+            revert TransactionInsufficientBalance();
 
         // Fetch the price consumer instance to use to fetch the price feed
         IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
@@ -485,7 +515,7 @@ contract Wallet is ReentrancyGuard {
         );
 
         // Calculate the wallet total balance in USD
-        uint256 totalBalanceInUsd = getTotalBalance();
+        uint256 totalBalanceInUsd = getTotalBalanceInUsd();
 
         // Calculate the wallet total locked balance in USD
         uint256 totalLockedBalanceInUsd = s_totalLockedBalanceInUsd;
@@ -508,7 +538,7 @@ contract Wallet is ReentrancyGuard {
             revert TransactionInsufficientUnlockedBalance();
 
         // Execute the transaction based on its type
-        if (!isEtherTransaction) {
+        if (isEtherTransaction) {
             // For ETH transactions, call the recipient address with the specified value
             (bool success, ) = transaction.to.call{value: transaction.value}(
                 ""
@@ -517,9 +547,8 @@ contract Wallet is ReentrancyGuard {
             if (!success) revert TransactionFailed();
         } else {
             // For ERC20 transactions, transfer the specified amount to the recipient address
-            SafeERC20.safeTransferFrom(
+            SafeERC20.safeTransfer(
                 IERC20(transaction.token),
-                address(this),
                 transaction.to,
                 transaction.value
             );
@@ -568,7 +597,7 @@ contract Wallet is ReentrancyGuard {
 
     /// @notice Returns the total balance of the wallet in USD
     /// @return usdTotal The total balance of the wallet in USD with 18 zeros (eg: 1 USD = 1,000,000,000,000,000,000 = 1e18)
-    function getTotalBalance() public view returns (uint256 usdTotal) {
+    function getTotalBalanceInUsd() public view returns (uint256 usdTotal) {
         address[] memory tokens = s_tokens;
         uint256 tokensLength = tokens.length;
         for (uint256 i = 0; i < tokensLength; i++) {
@@ -597,11 +626,19 @@ contract Wallet is ReentrancyGuard {
         return s_signers;
     }
 
-    /// @dev Returns a transaction based on its hash
+    /**
+     * @dev Returns a transaction based on its hash
+     * @param txHash The hash of the transaction to retrieve
+     * @return transactionView The transaction details
+     */
     function getTransaction(
         bytes32 txHash
     ) public view returns (TransactionView memory transactionView) {
+        // Retrieves a transaction based on its hash and returns a TransactionView
+        // If the transaction does not exist, it will revert with TransactionDoesNotExist
         TransactionStorage storage transaction = s_transactions[txHash];
+        if (transaction.hash == bytes32(0)) revert TransactionDoesNotExist();
+
         address[] memory approvers = _getTransactionApprovers(txHash);
         transactionView = TransactionView({
             hash: txHash,
@@ -619,7 +656,7 @@ contract Wallet is ReentrancyGuard {
     function getNewestTransactions(
         uint256 offset,
         uint256 limit
-    ) public view returns (TransactionView[] memory transactionsViews) {
+    ) public view returns (TransactionView[] memory results) {
         uint256 transactionHashesLength = s_transactionHashes.length;
 
         // Calculate available transactions after applying the offset
@@ -628,14 +665,14 @@ contract Wallet is ReentrancyGuard {
             : 0;
 
         // Determine the actual number of transactions to return
-        uint256 resultSize = available > limit ? limit : available;
+        uint256 size = available > limit ? limit : available;
 
-        transactionsViews = new TransactionView[](resultSize);
+        results = new TransactionView[](size);
 
         // Fetch transactions in reverse order (newest first)
-        for (uint256 i = 0; i < resultSize; i++) {
+        for (uint256 i = 0; i < size; i++) {
             // Calculate index: start from the end, apply offset, and iterate backward
-            uint256 index = transactionHashesLength - 1 - offset - i;
+            uint256 index = transactionHashesLength - offset - i - 1;
 
             // Gracefully handle invalid indices by returning empty
             if (index >= transactionHashesLength) {
@@ -643,7 +680,7 @@ contract Wallet is ReentrancyGuard {
             }
 
             bytes32 transactionHash = s_transactionHashes[index];
-            transactionsViews[i] = getTransaction(transactionHash);
+            results[i] = getTransaction(transactionHash);
         }
     }
 
