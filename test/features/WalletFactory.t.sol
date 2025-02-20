@@ -57,34 +57,39 @@ contract WalletFactoryTest is BaseTest {
             "Wallet address should match the one created"
         );
 
-        (
-            string memory actualWalletName,
-            ,
-            address[] memory actualSigners,
-            uint256 actualMinimumApprovals,
-            uint256 actualWalletBalance
-        ) = factory.getWallet(payable(walletAddress));
+        WalletFactory.WalletView[] memory walletViews = factory
+            .getWalletsBySigner(_getMainAccount(), 0, 10);
+
+        assertEq(walletViews.length, 1);
+
+        WalletFactory.WalletView memory walletView = factory.getWallet(
+            payable(walletAddress)
+        );
 
         // Assert that the wallet name is the same as the one set in the previous step
         assertEq(
-            actualWalletName,
+            walletView.name,
             walletName,
             "Wallet name should match the one set"
         );
 
         // Assert that the signers returned are the same as the ones set in the previous step
-        assertEq(actualSigners, signers, "Signers should match the ones set");
+        assertEq(
+            walletView.signers,
+            signers,
+            "Signers should match the ones set"
+        );
 
         // Assert that the minimum approvals returned are the same as the ones set in the previous step
         assertEq(
-            actualMinimumApprovals,
+            walletView.minimumApprovals,
             minimumApprovals,
             "Minimum approvals should match the ones set"
         );
 
         // Assert that the total balance of the wallet is greater than or equal to 0
         assertGe(
-            actualWalletBalance,
+            walletView.totalBalanceInUsd,
             0,
             "Total balance should be greater than or equal to 0"
         );
