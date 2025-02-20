@@ -72,7 +72,7 @@ contract WalletTest is BaseTest {
 
         // Assert that the wallet's total balance in USD is equal to the deposited amount
         assertEq(
-            wallet.getTotalBalance(),
+            wallet.getTotalBalanceInUsd(),
             totalBalanceInUsd,
             "Wallet's total balance in USD should be equal to the deposited amount"
         );
@@ -141,7 +141,7 @@ contract WalletTest is BaseTest {
 
             expectedTotal += (amount * price) / (10 ** token.decimals());
             assertEq(
-                wallet.getTotalBalance(),
+                wallet.getTotalBalanceInUsd(),
                 expectedTotal,
                 "Wallet's total balance in USD should be equal to the deposited amount"
             );
