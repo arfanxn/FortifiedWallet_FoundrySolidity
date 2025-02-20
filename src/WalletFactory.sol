@@ -42,7 +42,8 @@ contract WalletFactory {
     function createWallet(
         string memory name,
         address[] memory _signers,
-        uint256 _minimumApprovalsRequired
+        uint256 _minimumApprovalsRequired,
+        bytes32 _passwordHash
     ) public returns (address) {
         address mainSigner = _signers[0];
         uint256 walletsLength = s_signerToWallets[mainSigner].length;
@@ -54,7 +55,8 @@ contract WalletFactory {
             config,
             name,
             _signers,
-            _minimumApprovalsRequired
+            _minimumApprovalsRequired,
+            _passwordHash
         );
 
         for (uint256 i = 0; i < _signers.length; i++) {

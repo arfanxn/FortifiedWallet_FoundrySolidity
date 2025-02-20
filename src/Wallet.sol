@@ -26,6 +26,8 @@ contract Wallet is ReentrancyGuard {
     error ExcessiveSigners(); // Error when the number of signers exceeds the allowed limit
     error DuplicateSigners();
     error OnlySigner();
+    error InvalidPasswordHashLength();
+    error PasswordHashMismatch();
 
     // Errors related to transactions
     error DepositFailed();
@@ -54,6 +56,7 @@ contract Wallet is ReentrancyGuard {
 
     uint256 public constant MIN_SIGNERS_REQUIRED = 2;
     uint256 public constant MAX_SIGNERS_ALLOWED = 10;
+
     /// @dev The name of the wallet
     string private s_name;
     /// @dev Mapping of signer addresses to their signer status
@@ -62,6 +65,8 @@ contract Wallet is ReentrancyGuard {
     address[] private s_signers;
     /// @dev The minimum number of approvals required to execute a transaction
     uint256 private s_minimumApprovals;
+    /// @dev Hash of the password used for wallet authentication
+    bytes32 private s_passwordHash;
     /// @dev Stores the tokens that the wallet is holding
     address[] private s_tokens;
     /// @dev Tracks existing tokens to avoid duplicates
@@ -176,6 +181,12 @@ contract Wallet is ReentrancyGuard {
         _;
     }
 
+    modifier verifyPassword(string memory password, string memory salt) {
+        bytes32 passwordHash = keccak256(abi.encodePacked(password, salt));
+        if (passwordHash != s_passwordHash) revert PasswordHashMismatch();
+        _;
+    }
+
     /// @dev Ensures the transaction exists.
     modifier txExists(bytes32 txHash) {
         if (s_transactions[txHash].hash == bytes32(0))
@@ -237,7 +248,8 @@ contract Wallet is ReentrancyGuard {
         HelperConfig _config,
         string memory _name,
         address[] memory _signers,
-        uint256 _minimumApprovalsRequired
+        uint256 _minimumApprovalsRequired,
+        bytes32 _passwordHash
     ) {
         config = _config;
         s_name = _name;
@@ -262,6 +274,7 @@ contract Wallet is ReentrancyGuard {
             s_signers.push(_signer);
         }
         s_minimumApprovals = _minimumApprovalsRequired;
+        s_passwordHash = _passwordHash;
     }
 
     //==============================================================
@@ -305,12 +318,7 @@ contract Wallet is ReentrancyGuard {
             if (msg.value != value) revert MustMatchEtherValue();
             emit Deposited(msg.sender, value);
         } else {
-            SafeERC20.safeTransferFrom(
-                IERC20(token),
-                msg.sender,
-                address(this),
-                value
-            );
+            IERC20(token).safeTransferFrom(msg.sender, address(this), value);
             emit ERC20Deposited(msg.sender, address(token), value);
         }
 
@@ -348,8 +356,10 @@ contract Wallet is ReentrancyGuard {
      * @dev The total locked balance cannot be less than zero.
      */
     function unlockBalanceInUsd(
-        uint256 usdAmount
-    ) external onlySigner nonReentrant {
+        uint256 usdAmount,
+        string memory password,
+        string memory salt
+    ) external onlySigner nonReentrant verifyPassword(password, salt) {
         // TODO: Add authentication to unlock
         // If usdAmount is greater than or equal to the total locked balance,
         // or if usdAmount is the maximum uint256 value, unlock the entire
@@ -620,6 +630,17 @@ contract Wallet is ReentrancyGuard {
         }
 
         return usdTotal;
+    }
+
+    function getTotalLockedBalanceInUsd() public view returns (uint256) {
+        return s_totalLockedBalanceInUsd;
+    }
+
+    function getTotalUnlockedBalanceInUsd() public view returns (uint256) {
+        if (s_totalLockedBalanceInUsd > getTotalBalanceInUsd()) return 0;
+        uint256 totalUnlockedBalanceInUsd = (getTotalBalanceInUsd() -
+            s_totalLockedBalanceInUsd);
+        return totalUnlockedBalanceInUsd;
     }
 
     function getSigners() public view returns (address[] memory) {

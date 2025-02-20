@@ -9,6 +9,8 @@ import {Wallet} from "src/Wallet.sol";
 
 contract WalletTest is BaseTest {
     Wallet public wallet;
+    string public walletPassword;
+    string public walletSalt;
 
     function setUp() public override {
         super.setUp();
@@ -25,11 +27,18 @@ contract WalletTest is BaseTest {
             signers[i] = accounts[i];
         }
 
+        walletPassword = "nueoRNm0xxEfCs6Hzu1v7qWyD9CB3y8W";
+        walletSalt = "799PX8nKg18V5Ms2gXI5qnXCa5GZ6WF9";
+        bytes32 passwordHash = keccak256(
+            abi.encodePacked(walletPassword, walletSalt)
+        );
+
         // Create the wallet
         address walletAddress = factory.createWallet(
             walletName,
             signers,
-            minimumApprovals
+            minimumApprovals,
+            passwordHash
         );
 
         wallet = Wallet(payable(walletAddress));
@@ -37,6 +46,45 @@ contract WalletTest is BaseTest {
         assertNotEq(walletAddress, address(0));
 
         _;
+    }
+
+    function testLockUnlockBalance()
+        public
+        initAccounts(2)
+        fundAccounts
+        createWallet("", 2, 2)
+    {
+        address token = address(usdc);
+        uint256 amount = 1000 * 10 ** usdc.decimals();
+        uint256 amountInUsd = (amount / (10 ** usdc.decimals())) * 1e18;
+        uint256 lockedAmountInUsd = amountInUsd / 2;
+        uint256 unlockedAmountInUsd = amountInUsd - lockedAmountInUsd;
+
+        vm.startPrank(_getMainAccount());
+        usdc.approve(address(wallet), amount);
+        wallet.deposit(token, amount);
+        assertEq(usdc.balanceOf(address(wallet)), amount);
+        assertEq(wallet.getTotalBalanceInUsd(), amountInUsd);
+        vm.stopPrank();
+
+        vm.prank(_getMainAccount());
+        wallet.lockBalancedInUsd(lockedAmountInUsd);
+
+        assertEq(wallet.getTotalLockedBalanceInUsd(), lockedAmountInUsd);
+        assertEq(wallet.getTotalUnlockedBalanceInUsd(), unlockedAmountInUsd);
+
+        vm.prank(_getMainAccount());
+        wallet.unlockBalanceInUsd(
+            lockedAmountInUsd,
+            walletPassword,
+            walletSalt
+        );
+
+        assertEq(wallet.getTotalLockedBalanceInUsd(), 0);
+        assertEq(wallet.getTotalUnlockedBalanceInUsd(), amountInUsd);
+
+        uint256 totalBalanceInUsd = wallet.getTotalBalanceInUsd();
+        assertEq(totalBalanceInUsd, amountInUsd);
     }
 
     function testEthDeposit()

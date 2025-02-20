@@ -19,21 +19,21 @@ contract WalletFactoryTest is BaseTest {
         uint256 minimumApprovals = 2;
 
         // Set the wallet name
-        string memory walletName = "Fortified Wallet";
+        string memory name = "Fortified Wallet";
+        string memory password = "nueoRNm0xxEfCs6Hzu1v7qWyD9CB3y8W";
+        string memory salt = "799PX8nKg18V5Ms2gXI5qnXCa5GZ6WF9";
+        bytes32 passwordHash = keccak256(abi.encodePacked(password, salt));
 
         // Create the wallet
-        address walletAddress = factory.createWallet(
-            walletName,
+        address addr = factory.createWallet(
+            name,
             signers,
-            minimumApprovals
+            minimumApprovals,
+            passwordHash
         );
 
         // Assert that the wallet address is not zero
-        assertNotEq(
-            walletAddress,
-            address(0),
-            "Wallet address should not be zero"
-        );
+        assertNotEq(addr, address(0), "Wallet address should not be zero");
 
         // Get the list of wallets created by the main account
         address[] memory actualWalletAddresses = factory
@@ -53,7 +53,7 @@ contract WalletFactoryTest is BaseTest {
         // created in the previous step
         assertEq(
             actualWalletAddress,
-            walletAddress,
+            addr,
             "Wallet address should match the one created"
         );
 
@@ -63,15 +63,11 @@ contract WalletFactoryTest is BaseTest {
         assertEq(walletViews.length, 1);
 
         WalletFactory.WalletView memory walletView = factory.getWallet(
-            payable(walletAddress)
+            payable(addr)
         );
 
         // Assert that the wallet name is the same as the one set in the previous step
-        assertEq(
-            walletView.name,
-            walletName,
-            "Wallet name should match the one set"
-        );
+        assertEq(walletView.name, name, "Wallet name should match the one set");
 
         // Assert that the signers returned are the same as the ones set in the previous step
         assertEq(
