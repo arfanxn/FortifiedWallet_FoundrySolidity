@@ -247,7 +247,7 @@ contract Wallet is ReentrancyGuard {
         // and gas efficiency. With more than 10 signers, the cost of creating a new
         // transaction would be prohibitive. Given that the wallet is intended to be
         // used by a small group of trusted parties, 10 signers should be sufficient.
-        if (signersLength > MAXIMUM_SIGNERS) revert ExcessiveSigners();
+        if (signersLength > MAX_SIGNERS_ALLOWED) revert ExcessiveSigners();
         if (_minimumApprovalsRequired < 2) revert InsufficientSigners();
         if (_minimumApprovalsRequired > signersLength)
             revert ExcessiveSigners();
