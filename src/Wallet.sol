@@ -360,7 +360,6 @@ contract Wallet is ReentrancyGuard {
         string memory password,
         string memory salt
     ) external onlySigner nonReentrant verifyPassword(password, salt) {
-        // TODO: Add authentication to unlock
         // If usdAmount is greater than or equal to the total locked balance,
         // or if usdAmount is the maximum uint256 value, unlock the entire
         // locked balance.
