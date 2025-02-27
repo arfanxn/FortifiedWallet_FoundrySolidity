@@ -322,10 +322,13 @@ contract Wallet is ReentrancyGuard {
             emit ERC20Deposited(msg.sender, address(token), value);
         }
 
-        // If the token has not already been added to the array of tokens, add it.
-        // This is done to keep track of all the tokens that have been deposited
+        // Add the token to the array of tokens if it has not already been added.
+        // This is used to keep track of all the tokens that have been deposited
         // into the wallet.
-        if (!s_tokenExists[token]) s_tokens.push(token);
+        if (!s_tokenExists[token]) {
+            s_tokenExists[token] = true;
+            s_tokens.push(token);
+        }
     }
 
     /**
