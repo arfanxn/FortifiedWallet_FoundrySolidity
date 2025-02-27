@@ -16,8 +16,8 @@ contract DeployWalletFactory is Script, IDeployer {
     function run() external returns (address) {
         vm.startBroadcast();
         WalletFactory factory = new WalletFactory(config);
-        vm.stopBroadcast();
         config.setWalletFactory(address(factory));
+        vm.stopBroadcast();
         return address(factory);
     }
 }

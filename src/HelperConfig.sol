@@ -16,6 +16,10 @@ contract HelperConfig is MultiOwnable {
     }
 
     /**
+     * @dev address of the caller user
+     */
+    address private caller;
+    /**
      * @dev address of the PriceConsumer contract
      */
     address private priceConsumer;
@@ -64,6 +68,23 @@ contract HelperConfig is MultiOwnable {
     //==============================================================
     //                     Getters and setters
     //==============================================================
+
+    /**
+     * @dev get the caller address
+     * @return address of the caller
+     */
+    function getCaller() public view returns (address) {
+        return caller;
+    }
+
+    /**
+     * @dev set the caller address
+     * @param _caller address of the caller
+     */
+    function setCaller(address _caller) public onlyOwner {
+        caller = _caller;
+    }
+
 
     /**
      * @dev get the PriceConsumer contract address

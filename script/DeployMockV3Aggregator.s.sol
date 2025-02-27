@@ -22,14 +22,15 @@ contract DeployMockV3Aggregator is Script, IDeployer {
         MockV3Aggregator usdcPriceFeed = new MockV3Aggregator(8, 1 * 1e8);
         // Deploy a mock price feed for MKR
         MockV3Aggregator mkrPriceFeed = new MockV3Aggregator(8, 1000 * 1e8);
-        // Stop the new transaction
-        vm.stopBroadcast();
 
         // Save the price feed addresses
         config.setPriceFeed(HelperConfig.Token.ETH, address(etherPriceFeed));
         config.setPriceFeed(HelperConfig.Token.WETH, address(etherPriceFeed));
         config.setPriceFeed(HelperConfig.Token.USDC, address(usdcPriceFeed));
-        config.setPriceFeed(HelperConfig.Token.MKR, address(mkrPriceFeed));
+        config.setPriceFeed(HelperConfig.Token.MKR, address(mkrPriceFeed)); // Save the price feed addresses
+
+        // Stop the new transaction
+        vm.stopBroadcast();
 
         // Return the addresses of the price consumer and the two price feeds
         return address(config);

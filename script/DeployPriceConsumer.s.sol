@@ -33,10 +33,10 @@ contract DeployPriceConsumer is Script, IDeployer {
             priceConsumer.registerPriceFeed(tokenAddr, priceFeedAddr);
         }
 
+        config.setPriceConsumer(address(priceConsumer));
+
         // Stop the new transaction
         vm.stopBroadcast();
-
-        config.setPriceConsumer(address(priceConsumer));
 
         // Return the addresses of the price consumer and the two price feeds
         return address(priceConsumer);

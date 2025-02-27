@@ -15,7 +15,11 @@ contract Deployer is Script, IDeployer {
     HelperConfig private config;
 
     function run() external returns (address) {
+        vm.startBroadcast();
         config = new HelperConfig();
+        config.grantRole(config.OWNER_ROLE(), address(this));
+        config.setCaller(msg.sender);
+        vm.stopBroadcast();
 
         uint256 chainId = block.chainid;
         if (config.MAINNET_CHAIN_ID() == chainId) {
@@ -65,7 +69,9 @@ contract Deployer is Script, IDeployer {
      */
     function _executeDeployers(IDeployer[] memory deployers) private {
         for (uint256 i = 0; i < deployers.length; i++) {
+            vm.startBroadcast();
             config.grantRole(config.OWNER_ROLE(), address(deployers[i]));
+            vm.stopBroadcast();
             deployers[i].run();
         }
     }
