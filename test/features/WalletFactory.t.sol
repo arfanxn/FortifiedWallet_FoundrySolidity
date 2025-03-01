@@ -58,7 +58,7 @@ contract WalletFactoryTest is BaseTest {
         );
 
         WalletFactory.WalletView[] memory walletViews = factory
-            .getWalletsBySigner(_getMainAccount(), 0, 10);
+            .getNewestWalletsBySigner(_getMainAccount(), 0, 10);
 
         assertEq(walletViews.length, 1);
 

@@ -59,7 +59,7 @@ analyze:
 
 # Deploy contracts (example - customize for your needs)
 deploy:
-	@$(FORGE) script script/DeployWalletFactory.s.sol --broadcast --rpc-url $(RPC_URL) --private-key $(PRIVATE_KEY)
+	@$(FORGE) script script/Deployer.s.sol --broadcast --rpc-url $(RPC_URL) --private-key $(PRIVATE_KEY)
 
 # Verify contract (example - customize for your needs)
 verify:
@@ -86,14 +86,26 @@ help:
 	@echo "  help        Show this help message"
 
 
-.PHONY: create-wallet deposit-eth-to-wallet deposit-token-to-wallet
+get-wallet-factory-address:
+	cast call ${HELPER_CONFIG_CONTRACT_ADDRESS} "getWalletFactory() returns (address)" \
+	--rpc-url $(RPC_URL)
+
+get-usdc-address: 
+	cast call ${HELPER_CONFIG_CONTRACT_ADDRESS} "getToken(HelperConfig.Token) view returns(address)" \
+	2 \
+	--rpc-url $(RPC_URL)
 
 # Deploy contracts (example - customize for your needs)
 create-wallet:
-	cast send $(WALLET_FACTORY_CONTRACT_ADDRESS)  "createWallet(address[], uint256)" \
-	$(WALLET_SIGNER_ADDRESSES) $(WALLET_MINIMUM_APPROVALS_REQUIRED)  \
+	cast send $(WALLET_FACTORY_CONTRACT_ADDRESS) "createWallet(string, address[], uint256, bytes32)" \
+	$(WALLET_NAME) $(WALLET_SIGNER_ADDRESSES) $(WALLET_MINIMUM_APPROVALS_REQUIRED) $(WALLET_PASSWORD_HASH) \
 	--rpc-url $(RPC_URL) \
 	--private-key $(PRIVATE_KEY)
+
+get-wallet-addresses-by-signer:
+	cast call $(WALLET_FACTORY_CONTRACT_ADDRESS) "getWalletAddressesBySigner(address signer, uint256 offset, uint256 limit) view returns(address[])" \
+	$(PUBLIC_KEY) 0 10 \
+	--rpc-url $(RPC_URL)
 
 # Deposit ETH into wallet contract
 # the `--value` parameter must match `value` (the amount ETH to send)
@@ -114,3 +126,9 @@ deposit-token-to-wallet:
 	5000000 \
 	--rpc-url $(RPC_URL) \
 	--private-key $(PRIVATE_KEY) \
+
+get-total-balance-in-usd:
+	cast call $(WALLET_CONTRACT_ADDRESS) "getTotalBalanceInUsd() view returns(uint256)" \
+	--rpc-url $(RPC_URL)
+
+
