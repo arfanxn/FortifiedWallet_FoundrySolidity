@@ -205,6 +205,11 @@ contract WalletTest is BaseTest {
         address token = address(0); // Specify Ether as the token
         address to = accounts[2]; // Set recipient of the transaction
         uint256 amount = 1e18; // Define the transaction amount
+        uint256 usdAmount = PriceUtils.getUsdValue(
+            token,
+            amount,
+            IDynamicPriceConsumer(config.getPriceConsumer())
+        );
 
         // Ensure initial balances are as expected
         assertEq(_getMainAccount().balance, ACCOUNT_INITIAL_ETH);
@@ -232,6 +237,7 @@ contract WalletTest is BaseTest {
         assertEq(transactionView.token, token);
         assertEq(transactionView.to, to);
         assertEq(transactionView.value, amount);
+        assertEq(transactionView.valueInUsd, usdAmount);
         assertEq(transactionView.approvalCount, 1);
         assertEq(transactionView.approvers[0], _getMainAccount());
         assertEq(transactionView.approvers[1], address(0));
