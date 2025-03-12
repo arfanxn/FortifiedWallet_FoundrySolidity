@@ -124,6 +124,8 @@ contract WalletTest is BaseTest {
             totalBalanceInUsd,
             "Wallet's total balance in USD should be equal to the deposited amount"
         );
+
+        assertEq(address(wallet.getTokens()[0]), address(0));
     }
 
     function testTokensDeposit()
@@ -193,6 +195,13 @@ contract WalletTest is BaseTest {
                 expectedTotal,
                 "Wallet's total balance in USD should be equal to the deposited amount"
             );
+        }
+
+        address[] memory actualTokens = wallet.getTokens();
+        for (uint i = 0; i < tokens.length; i++) {
+            address tokenAddress = address(tokens[i]);
+            address actualTokenAddress = actualTokens[i];
+            assertEq(actualTokenAddress, tokenAddress);
         }
     }
 
