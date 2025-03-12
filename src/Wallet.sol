@@ -108,6 +108,8 @@ contract Wallet is ReentrancyGuard {
         address to;
         /// @notice Amount of Ether or tokens to be transferred
         uint256 value;
+        // @notice  the USD value of the transaction
+        uint256 valueInUsd;
         /// @notice Number of approvals the transaction has received
         uint8 approvalCount;
         /// @notice List of addresses that have approved the transaction
@@ -649,6 +651,10 @@ contract Wallet is ReentrancyGuard {
         return s_signers;
     }
 
+    function getTokens() public view returns (address[] memory) {
+        return s_tokens;
+    }
+
     /**
      * @dev Returns a transaction based on its hash
      * @param txHash The hash of the transaction to retrieve
@@ -663,11 +669,20 @@ contract Wallet is ReentrancyGuard {
         if (transaction.hash == bytes32(0)) revert TransactionDoesNotExist();
 
         address[] memory approvers = _getTransactionApprovers(txHash);
+        IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
+            config.getPriceConsumer()
+        );
+        uint256 valueInUsd = PriceUtils.getUsdValue( // Calculate the USD value of the transaction
+                transaction.token,
+                transaction.value,
+                priceConsumer
+            );
         transactionView = TransactionView({
             hash: txHash,
             token: transaction.token,
             to: transaction.to,
             value: transaction.value,
+            valueInUsd: valueInUsd,
             approvalCount: transaction.approvalCount,
             approvers: approvers,
             createdAt: transaction.createdAt,
