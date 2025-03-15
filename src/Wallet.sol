@@ -585,10 +585,10 @@ contract Wallet is ReentrancyGuard {
         bytes32 txHash
     ) private view returns (address[] memory approvers) {
         TransactionStorage storage transaction = s_transactions[txHash];
+        approvers = new address[](transaction.approvalCount);
+
         address[] memory signers = s_signers;
         uint256 signersLength = signers.length;
-        approvers = new address[](signersLength);
-
         uint256 approversIndex = 0;
         for (uint256 i = 0; i < signersLength; i++) {
             address signer = signers[i];
