@@ -38,6 +38,8 @@ contract WalletFactory {
         address[] signers;
         uint256 minimumApprovals;
         uint256 totalBalanceInUsd;
+        uint256 totalLockedBalanceInUsd;
+        uint256 totalUnlockedBalanceInUsd;
     }
 
     /// @notice Event emitted when a new wallet is created
@@ -173,15 +175,17 @@ contract WalletFactory {
     function getWallet(
         address payable walletAddress
     ) public view returns (WalletView memory walletView) {
-        Wallet wallet = Wallet(walletAddress);
         if (walletAddress == address(0) || !s_walletExists[walletAddress])
             revert WalletDoesNotExist();
+        Wallet wallet = Wallet(walletAddress);
         walletView = WalletView({
             name: wallet.getName(),
             addr: walletAddress,
             signers: wallet.getSigners(),
             minimumApprovals: wallet.getMinimumApprovals(),
-            totalBalanceInUsd: wallet.getTotalBalanceInUsd()
+            totalBalanceInUsd: wallet.getTotalBalanceInUsd(),
+            totalLockedBalanceInUsd: wallet.getTotalLockedBalanceInUsd(),
+            totalUnlockedBalanceInUsd: wallet.getTotalUnlockedBalanceInUsd()
         });
     }
 
