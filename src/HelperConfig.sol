@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {MultiOwnable} from "src/libraries/MultiOwnable.sol";
+import {MultiOwnable} from "src/MultiOwnable.sol";
 
 contract HelperConfig is MultiOwnable {
     error InvalidChainId();
@@ -84,7 +84,6 @@ contract HelperConfig is MultiOwnable {
     function setCaller(address _caller) public onlyOwner {
         caller = _caller;
     }
-
 
     /**
      * @dev get the PriceConsumer contract address
