@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {PriceUtils} from "src/libraries/PriceUtils.sol";
-import {IDynamicPriceConsumer} from "src/interfaces/IDynamicPriceConsumer.sol";
-import {HelperConfig} from "src/HelperConfig.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {IERC20Metadata} from "src/interfaces/IERC20Metadata.sol";
-import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import {ContractRegistry} from "src/ContractRegistry.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {PriceLibs} from "src/libraries/PriceLibs.sol";
+import {PriceFeedRegistry} from "src/PriceFeedRegistry.sol";
 
 contract Wallet is ReentrancyGuard {
-    HelperConfig private immutable config;
+    ContractRegistry private immutable i_contractRegistry;
+    PriceFeedRegistry private immutable i_priceFeedRegistry;
 
     //==============================================================
     //                           Errors
@@ -233,10 +234,7 @@ contract Wallet is ReentrancyGuard {
     /// @dev Ensures the given token is supported by verifying a price feed
     /// exists for it.
     modifier tokenSupported(address tokenAddress) {
-        IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
-            config.getPriceConsumer()
-        );
-        try priceConsumer.fetchPriceFeed(tokenAddress) returns (
+        try i_priceFeedRegistry.getPriceFeed(tokenAddress) returns (
             AggregatorV3Interface priceFeed
         ) {
             if (address(priceFeed) == address(0)) revert TokenNotSupported();
@@ -314,13 +312,16 @@ contract Wallet is ReentrancyGuard {
      * - The value of `_minimumApprovalsRequired` must be less than or equal to the length of the `_signers` array.
      */
     constructor(
-        HelperConfig _config,
+        ContractRegistry _contractRegistry,
         string memory _name,
         address[] memory _signers,
         uint256 _minimumApprovalsRequired,
         bytes32 _passwordHash
     ) {
-        config = _config;
+        i_contractRegistry = _contractRegistry;
+        i_priceFeedRegistry = PriceFeedRegistry(
+            _contractRegistry.getContract("__PriceFeedRegistry")
+        );
         s_name = _name;
         uint256 signersLength = _signers.length;
         if (signersLength < MIN_SIGNERS_REQUIRED) revert InsufficientSigners();
@@ -622,11 +623,6 @@ contract Wallet is ReentrancyGuard {
         if (balance < transaction.value)
             revert TransactionInsufficientBalance();
 
-        // Fetch the price consumer instance to use to fetch the price feed
-        IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
-            config.getPriceConsumer()
-        );
-
         // Calculate the wallet total balance in USD
         uint256 totalBalanceInUsd = getTotalBalanceInUsd();
 
@@ -639,11 +635,14 @@ contract Wallet is ReentrancyGuard {
             ? 0
             : totalBalanceInUsd - totalLockedBalanceInUsd;
 
+        AggregatorV3Interface priceFeed = i_priceFeedRegistry.getPriceFeed(
+            transaction.token
+        );
         // Calculate the USD value of the transaction
-        uint256 valueInUsd = PriceUtils.getUsdValue(
+        uint256 valueInUsd = PriceLibs.getScaledPriceXAmount(
             transaction.token,
             transaction.value,
-            priceConsumer
+            priceFeed
         );
 
         // Revert if the transaction value exceeds the unlocked balance
@@ -711,16 +710,16 @@ contract Wallet is ReentrancyGuard {
     function getBalance(
         address tokenAddress
     ) public view returns (uint256 balance, uint256 balanceInUsd) {
-        IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
-            config.getPriceConsumer()
+        AggregatorV3Interface priceFeed = i_priceFeedRegistry.getPriceFeed(
+            tokenAddress
         );
         balance = tokenAddress == address(0)
             ? address(this).balance
             : IERC20(tokenAddress).balanceOf(address(this));
-        balanceInUsd = PriceUtils.getUsdValue(
+        balanceInUsd = PriceLibs.getScaledPriceXAmount(
             tokenAddress,
             balance,
-            priceConsumer
+            priceFeed
         );
     }
 
@@ -729,23 +728,28 @@ contract Wallet is ReentrancyGuard {
     function getTotalBalanceInUsd() public view returns (uint256 usdTotal) {
         address ETH = address(0);
 
-        IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
-            config.getPriceConsumer()
+        AggregatorV3Interface ethPriceFeed = i_priceFeedRegistry.getPriceFeed(
+            ETH
         );
-
         uint256 ethBalance = address(this).balance;
         if (ethBalance > 0)
-            usdTotal += PriceUtils.getUsdValue(ETH, ethBalance, priceConsumer);
+            usdTotal += PriceLibs.getScaledPriceXAmount(
+                ETH,
+                ethBalance,
+                ethPriceFeed
+            );
 
         address[] memory tokens = s_tokens;
         uint256 tokensLength = tokens.length;
         for (uint256 i = 0; i < tokensLength; i++) {
             address token = tokens[i];
+            AggregatorV3Interface tokenPriceFeed = i_priceFeedRegistry
+                .getPriceFeed(token);
 
-            usdTotal += PriceUtils.getUsdValue(
+            usdTotal += PriceLibs.getScaledPriceXAmount(
                 token,
                 IERC20(token).balanceOf(address(this)),
-                priceConsumer
+                tokenPriceFeed
             );
         }
 
@@ -796,8 +800,8 @@ contract Wallet is ReentrancyGuard {
         try IERC20Metadata(tokenAddress).name() returns (
             string memory /* name */
         ) {
-            IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
-                config.getPriceConsumer()
+            AggregatorV3Interface priceFeed = i_priceFeedRegistry.getPriceFeed(
+                tokenAddress
             );
             return
                 TokenView({
@@ -806,15 +810,12 @@ contract Wallet is ReentrancyGuard {
                     symbol: IERC20Metadata(tokenAddress).symbol(),
                     decimals: IERC20Metadata(tokenAddress).decimals(),
                     balance: IERC20(tokenAddress).balanceOf(address(this)),
-                    balanceInUsd: PriceUtils.getUsdValue(
+                    balanceInUsd: PriceLibs.getScaledPriceXAmount(
                         tokenAddress,
                         IERC20(tokenAddress).balanceOf(address(this)),
-                        priceConsumer
+                        priceFeed
                     ),
-                    priceInUsd: PriceUtils.getUsdPrice(
-                        tokenAddress,
-                        priceConsumer
-                    )
+                    priceInUsd: PriceLibs.getScaledPrice(priceFeed)
                 });
         } catch {
             revert TokenDoesNotExist();
@@ -858,13 +859,10 @@ contract Wallet is ReentrancyGuard {
         if (transaction.hash == bytes32(0)) revert TransactionDoesNotExist();
 
         address[] memory approvers = _getTransactionApprovers(txHash);
-        IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
-            config.getPriceConsumer()
-        );
-        uint256 valueInUsd = PriceUtils.getUsdValue( // Calculate the USD value of the transaction
+        uint256 valueInUsd = PriceLibs.getScaledPriceXAmount( // Calculate the USD value of the transaction
                 transaction.token,
                 transaction.value,
-                priceConsumer
+                i_priceFeedRegistry.getPriceFeed(transaction.token)
             );
         transactionView = TransactionView({
             hash: txHash,

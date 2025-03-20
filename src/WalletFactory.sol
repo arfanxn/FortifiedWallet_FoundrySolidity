@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {HelperConfig} from "src/HelperConfig.sol";
+import {ContractRegistry} from "src/ContractRegistry.sol";
 import {Wallet} from "src/Wallet.sol";
 
 contract WalletFactory {
@@ -10,7 +10,7 @@ contract WalletFactory {
     /// allowed number of wallets.
     error WalletExceededMaximum();
 
-    HelperConfig private immutable config;
+    ContractRegistry private immutable i_contractRegistry;
 
     struct SignerWalletRegistry {
         address[] ownedWallets; // Wallets directly owned/created by the signer
@@ -45,8 +45,8 @@ contract WalletFactory {
     /// @notice Event emitted when a new wallet is created
     event WalletCreated(address indexed wallet, address[] signers);
 
-    constructor(HelperConfig _config) {
-        config = _config;
+    constructor(ContractRegistry _contractRegistry) {
+        i_contractRegistry = _contractRegistry;
     }
 
     /**
@@ -69,7 +69,7 @@ contract WalletFactory {
 
         // Create a new Wallet instance
         Wallet wallet = new Wallet(
-            config,
+            i_contractRegistry,
             name,
             signers,
             minimumApprovalsRequired,

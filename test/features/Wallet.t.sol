@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {console2} from "forge-std/console2.sol";
-import {PriceUtils} from "src/libraries/PriceUtils.sol";
-import {IDynamicPriceConsumer} from "src/interfaces/IDynamicPriceConsumer.sol";
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import {BaseTest} from "test/features/BaseTest.t.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
-import {BaseTest} from "test/features/Base.t.sol";
+import {PriceLibs} from "src/libraries/PriceLibs.sol";
 import {Wallet} from "src/Wallet.sol";
 
 contract WalletTest is BaseTest {
@@ -35,7 +34,7 @@ contract WalletTest is BaseTest {
         );
 
         // Create the wallet
-        address walletAddress = factory.createWallet(
+        address walletAddress = walletFactory.createWallet(
             walletName,
             signers,
             minimumApprovals,
@@ -116,8 +115,11 @@ contract WalletTest is BaseTest {
         );
 
         // Calculate the total balance in USD
-        uint256 oneEthInUsd = 2600e18;
-        uint256 totalBalanceInUsd = (oneEthInUsd * amount) / 1e18;
+        AggregatorV3Interface etherPriceFeed = priceFeedRegistry.getPriceFeed(
+            address(0)
+        );
+        uint256 oneEthInUsd = PriceLibs.getScaledPrice(etherPriceFeed);
+        uint256 totalBalanceInUsd = (oneEthInUsd * amount) / 1e18; // multiply the price in USD by the deposited amount, then normalize to 18 decimals
 
         // Assert that the wallet's total balance in USD is equal to the deposited amount
         assertEq(
@@ -241,10 +243,10 @@ contract WalletTest is BaseTest {
         address token = address(0); // Specify Ether as the token
         address to = accounts[2]; // Set recipient of the transaction
         uint256 amount = 1e18; // Define the transaction amount
-        uint256 usdAmount = PriceUtils.getUsdValue(
+        uint256 usdAmount = PriceLibs.getScaledPriceXAmount(
             token,
             amount,
-            IDynamicPriceConsumer(config.getPriceConsumer())
+            priceFeedRegistry.getPriceFeed(token)
         );
 
         // Ensure initial balances are as expected
@@ -444,10 +446,10 @@ contract WalletTest is BaseTest {
         address token = address(0);
         address to = accounts[3];
         uint256 amount = 1e18;
-        uint256 usdAmount = PriceUtils.getUsdValue(
+        uint256 usdAmount = PriceLibs.getScaledPriceXAmount(
             token,
             amount,
-            IDynamicPriceConsumer(config.getPriceConsumer())
+            priceFeedRegistry.getPriceFeed(token)
         );
 
         // Deposit Ether into the wallet

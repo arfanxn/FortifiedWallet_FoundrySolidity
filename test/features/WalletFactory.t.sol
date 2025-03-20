@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {BaseTest} from "test/features/Base.t.sol";
+import {BaseTest} from "test/features/BaseTest.t.sol";
 import {WalletFactory} from "src/WalletFactory.sol";
 
 contract WalletFactoryTest is BaseTest {
@@ -25,7 +25,7 @@ contract WalletFactoryTest is BaseTest {
         bytes32 passwordHash = keccak256(abi.encodePacked(password, salt));
 
         // Create the wallet
-        address addr = factory.createWallet(
+        address addr = walletFactory.createWallet(
             name,
             signers,
             minimumApprovals,
@@ -36,7 +36,7 @@ contract WalletFactoryTest is BaseTest {
         assertNotEq(addr, address(0), "Wallet address should not be zero");
 
         // Get the list of wallets created by the main account
-        address[] memory actualWalletAddresses = factory
+        address[] memory actualWalletAddresses = walletFactory
             .getWalletAddressesBySigner(_getMainAccount(), 0, 10);
 
         // Assert that the list has only one wallet
@@ -57,12 +57,12 @@ contract WalletFactoryTest is BaseTest {
             "Wallet address should match the one created"
         );
 
-        WalletFactory.WalletView[] memory walletViews = factory
+        WalletFactory.WalletView[] memory walletViews = walletFactory
             .getNewestWalletsBySigner(_getMainAccount(), 0, 10);
 
         assertEq(walletViews.length, 1);
 
-        WalletFactory.WalletView memory walletView = factory.getWallet(
+        WalletFactory.WalletView memory walletView = walletFactory.getWallet(
             payable(addr)
         );
 
