@@ -21,19 +21,16 @@ contract AnvilDeployer is Script {
         vm.startBroadcast();
 
         contractRegistry = new ContractRegistry();
-
-        vm.stopBroadcast();
-
         deployRegistries();
         deployMocks();
         deployWalletFactory();
+
+        vm.stopBroadcast();
 
         return address(contractRegistry);
     }
 
     function deployRegistries() internal {
-        vm.startBroadcast();
-
         tokenRegistry = new TokenRegistry();
         contractRegistry.setContract("__TokenRegistry", address(tokenRegistry));
 
@@ -42,13 +39,9 @@ contract AnvilDeployer is Script {
             "__PriceFeedRegistry",
             address(priceFeedRegistry)
         );
-
-        vm.stopBroadcast();
     }
 
     function deployMocks() internal {
-        vm.startBroadcast();
-
         address Ether = address(0);
         MockV3Aggregator etherPriceFeed = new MockV3Aggregator(8, 2000 * 1e8);
         priceFeedRegistry.setPriceFeed(Ether, etherPriceFeed);
@@ -74,14 +67,10 @@ contract AnvilDeployer is Script {
 
             token.mint(msg.sender, 10_000 * 10 ** token.decimals());
         }
-
-        vm.stopBroadcast();
     }
 
     function deployWalletFactory() internal {
-        vm.startBroadcast();
         WalletFactory walletFactory = new WalletFactory(contractRegistry);
         contractRegistry.setContract("__WalletFactory", address(walletFactory));
-        vm.stopBroadcast();
     }
 }
