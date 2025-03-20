@@ -8,7 +8,7 @@ import {WalletFactory} from "src/WalletFactory.sol";
 import {ContractRegistry} from "src/ContractRegistry.sol";
 import {TokenRegistry} from "src/TokenRegistry.sol";
 import {PriceFeedRegistry} from "src/PriceFeedRegistry.sol";
-import {AnvilDeployer} from "script/AnvilDeployer.sol";
+import {AnvilDeployer} from "script/AnvilDeployer.s.sol";
 
 /// @title Base Test Contract
 /// @notice This contract is used as a base for other test contracts
