@@ -23,6 +23,18 @@ library PriceUtils {
             ? 18
             : IERC20Metadata(token).decimals();
 
+        // Adjust decimals for calculation
+        uint256 adjustedPrice = getUsdPrice(token, priceConsumer);
+        uint256 adjustedAmount = amount * (10 ** (18 - tokenDecimals)); // Scale to 18 decimals
+
+        // Calculate USD value (amount * price)
+        usdValue = (adjustedAmount * adjustedPrice) / 1e18; // Divide by 1e18 to normalize
+    }
+
+    function getUsdPrice(
+        address token,
+        IDynamicPriceConsumer priceConsumer
+    ) internal view returns (uint256 usdPrice) {
         AggregatorV3Interface priceFeed = priceConsumer.fetchPriceFeed(token);
         (, int256 price, , , ) = priceFeed.latestRoundData();
         uint8 priceFeedDecimals = priceFeed.decimals();
@@ -30,9 +42,7 @@ library PriceUtils {
         // Adjust decimals for calculation
         uint256 adjustedPrice = uint256(price) *
             (10 ** (18 - priceFeedDecimals)); // Scale to 18 decimals
-        uint256 adjustedAmount = amount * (10 ** (18 - tokenDecimals)); // Scale to 18 decimals
 
-        // Calculate USD value (amount * price)
-        usdValue = (adjustedAmount * adjustedPrice) / 1e18; // Divide by 1e18 to normalize
+        usdPrice = adjustedPrice;
     }
 }
