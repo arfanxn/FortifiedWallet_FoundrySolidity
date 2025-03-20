@@ -28,9 +28,9 @@ contract DynamicPriceConsumer is IDynamicPriceConsumer {
         address _token
     ) public view returns (AggregatorV3Interface) {
         AggregatorV3Interface priceFeed = priceFeeds[_token];
-        bool tokenIsNotZero = _token != address(0);
+        bool tokenIsETH = _token == address(0);
         bool priceFeedIsZero = address(priceFeed) == address(0);
-        if (tokenIsNotZero && priceFeedIsZero) {
+        if (!tokenIsETH && priceFeedIsZero) {
             revert PriceFeedIsNotRegistered();
         }
         return priceFeed;
