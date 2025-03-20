@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {console2} from "forge-std/console2.sol";
 import {PriceUtils} from "src/libraries/PriceUtils.sol";
 import {IDynamicPriceConsumer} from "src/interfaces/IDynamicPriceConsumer.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
@@ -124,8 +125,6 @@ contract WalletTest is BaseTest {
             totalBalanceInUsd,
             "Wallet's total balance in USD should be equal to the deposited amount"
         );
-
-        assertEq(address(wallet.getTokens()[0]), address(0));
     }
 
     function testTokensDeposit()
@@ -197,12 +196,40 @@ contract WalletTest is BaseTest {
             );
         }
 
-        address[] memory actualTokens = wallet.getTokens();
+        address[] memory actualTokens = wallet.getTokenAddresses(0, 100, false);
+        Wallet.TokenView[] memory actualTokenViews = wallet.getTokens(
+            0,
+            100,
+            false
+        );
         for (uint i = 0; i < tokens.length; i++) {
             address tokenAddress = address(tokens[i]);
             address actualTokenAddress = actualTokens[i];
             assertEq(actualTokenAddress, tokenAddress);
+
+            Wallet.TokenView memory actualTokenView = actualTokenViews[i];
+            assertEq(actualTokenView.addr, tokenAddress);
         }
+
+        // Start the mock transaction as the main account
+        vm.startPrank(_getMainAccount());
+
+        // Remove the USDC token from the wallet
+        wallet.removeToken(address(usdc));
+
+        // Attempt to remove the USDC token again, expecting a revert because it no longer exists
+        vm.expectRevert(Wallet.TokenNotAdded.selector);
+        wallet.removeToken(address(usdc));
+
+        // Add the USDC token back to the wallet
+        wallet.addToken(address(usdc));
+
+        // Attempt to add the USDC token again, expecting a revert because it already exists
+        vm.expectRevert(Wallet.TokenAlreadyAdded.selector);
+        wallet.addToken(address(usdc));
+
+        // Stop the mock transaction
+        vm.stopPrank();
     }
 
     function testCreateUnexecutedEthTransaction()
@@ -248,8 +275,8 @@ contract WalletTest is BaseTest {
         assertEq(transactionView.value, amount);
         assertEq(transactionView.valueInUsd, usdAmount);
         assertEq(transactionView.approvalCount, 1);
+        assertEq(transactionView.approvers.length, 1);
         assertEq(transactionView.approvers[0], _getMainAccount());
-        assertEq(transactionView.approvers[1], address(0));
         assertEq(transactionView.createdAt, createdAt);
         assertEq(transactionView.executedAt, 0);
         assertEq(transactionView.cancelledAt, 0);
