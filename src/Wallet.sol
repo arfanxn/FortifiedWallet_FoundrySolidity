@@ -7,6 +7,8 @@ import {IDynamicPriceConsumer} from "src/interfaces/IDynamicPriceConsumer.sol";
 import {HelperConfig} from "src/HelperConfig.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20Metadata} from "src/interfaces/IERC20Metadata.sol";
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 
 contract Wallet is ReentrancyGuard {
     HelperConfig private immutable config;
@@ -28,6 +30,12 @@ contract Wallet is ReentrancyGuard {
     error OnlySigner();
     error InvalidPasswordHashLength();
     error PasswordHashMismatch();
+
+    // Errors related to tokens
+    error TokenDoesNotExist();
+    error TokenAlreadyAdded();
+    error TokenNotAdded();
+    error TokenNotSupported();
 
     // Errors related to transactions
     error DepositFailed();
@@ -70,9 +78,28 @@ contract Wallet is ReentrancyGuard {
     /// @dev Stores the tokens that the wallet is holding
     address[] private s_tokens;
     /// @dev Tracks existing tokens to avoid duplicates
-    mapping(address => bool) private s_tokenExists;
+    mapping(address => bool) private s_tokenAdded;
+    /// @dev Tracks the index of a token in the tokens array
+    mapping(address => uint256) private s_tokenIndexes;
     /// @dev Tracks the total locked balance of the wallet in USD
     uint256 private s_totalLockedBalanceInUsd;
+
+    struct TokenView {
+        /// @notice Address of the token
+        address addr;
+        /// @notice Name of the token
+        string name;
+        /// @notice Symbol of the token
+        string symbol;
+        /// @notice Number of decimals the token uses
+        uint256 decimals;
+        /// @notice Balance of the token
+        uint256 balance;
+        /// @notice USD value of the token
+        uint256 balanceInUsd;
+        /// @notice USD price per token
+        uint256 priceInUsd;
+    }
 
     /// @notice Represents a transaction to be executed by the wallet
     struct TransactionStorage {
@@ -183,9 +210,49 @@ contract Wallet is ReentrancyGuard {
         _;
     }
 
+    /// @dev Ensures the given password matches the stored hash.
     modifier verifyPassword(string memory password, string memory salt) {
         bytes32 passwordHash = keccak256(abi.encodePacked(password, salt));
         if (passwordHash != s_passwordHash) revert PasswordHashMismatch();
+        _;
+    }
+
+    /// @dev Ensures the token exists by verifying its metadata can be retrieved.
+    modifier tokenExists(address tokenAddress) {
+        if (tokenAddress == address(0)) revert TokenDoesNotExist();
+        try IERC20Metadata(tokenAddress).name() returns (string memory name) {
+            bool isEmptyName = keccak256(abi.encodePacked(name)) ==
+                keccak256(abi.encodePacked(""));
+            if (isEmptyName) revert TokenDoesNotExist();
+            _;
+        } catch {
+            revert TokenDoesNotExist();
+        }
+    }
+
+    /// @dev Ensures the given token is supported by verifying a price feed
+    /// exists for it.
+    modifier tokenSupported(address tokenAddress) {
+        IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
+            config.getPriceConsumer()
+        );
+        try priceConsumer.fetchPriceFeed(tokenAddress) returns (
+            AggregatorV3Interface priceFeed
+        ) {
+            if (address(priceFeed) == address(0)) revert TokenNotSupported();
+            _;
+        } catch {
+            revert TokenNotSupported();
+        }
+    }
+
+    modifier tokenAlreadyAdded(address tokenAddress) {
+        if (s_tokenAdded[tokenAddress] == false) revert TokenNotAdded();
+        _;
+    }
+
+    modifier tokenNotAdded(address tokenAddress) {
+        if (s_tokenAdded[tokenAddress]) revert TokenAlreadyAdded();
         _;
     }
 
@@ -286,49 +353,37 @@ contract Wallet is ReentrancyGuard {
     //==============================================================
     //                       External functions
     //==============================================================
-    /// @notice Reverts any Ether sent to the contract.
-    /// @dev This function is required to prevent Ether from being sent to the
-    /// contract. To deposit Ether or ERC20 tokens, use the `deposit` function
-    /// instead.
-    receive() external payable {
-        revert MustUseFunctionCall();
-    }
 
-    /// @notice Reverts any calls to the contract that are not explicitly handled.
-    /// @dev This function is required to prevent any unexpected behavior from
-    /// occurring when the contract is called with an unknown function signature.
-    fallback() external payable {
-        revert MustUseFunctionCall();
-    }
+    receive() external payable {}
+    fallback() external payable {}
 
-    /// @notice Deposits Ether or ERC20 tokens into the wallet.
-    /// @param token The ERC20 token to be deposited. If Ether, set to address(0).
-    /// @param value The amount of tokens to be deposited. If Ether, set to address(0).
+    /// @notice Deposits Ether or ERC20 tokens into the wallet
+    /// @param token ERC20 token address (use address(0) for Ether)
+    /// @param value Amount to deposit (must equal msg.value for Ether)
     function deposit(
         address token,
         uint256 value
     ) external payable greaterThanZero(value) nonReentrant {
-        address etherAddress = address(0);
+        address ETH = address(0);
 
-        // If token is not Ether (i.e. it's an ERC20 token), then `msg.value` must be zero.
-        // Otherwise, if `msg.value` is not zero, then we must be depositing Ether, not an ERC20 token.
-        bool tokenIsNotEther = token != etherAddress;
-        bool msgValueIsNotZero = msg.value != 0;
-        if (tokenIsNotEther && msgValueIsNotZero) revert MustUseFunctionCall();
+        // Validate deposit type consistency
+        if (token != ETH && msg.value != 0) revert MustUseFunctionCall(); // ERC20 deposit with ETH sent
 
-        if (token == etherAddress) {
-            if (msg.value != value) revert MustMatchEtherValue();
+        if (token == ETH) {
+            // Validate ETH amount matches declared value
+            if (msg.value != value) revert MustMatchEtherValue(); // ETH value mismatch
+
             emit Deposited(msg.sender, value);
         } else {
+            // Execute ERC20 transfer
             IERC20(token).safeTransferFrom(msg.sender, address(this), value);
-            emit ERC20Deposited(msg.sender, address(token), value);
+            emit ERC20Deposited(msg.sender, token, value);
         }
 
-        // Add the token to the array of tokens if it has not already been added.
-        // This is used to keep track of all the tokens that have been deposited
-        // into the wallet.
-        if (!s_tokenExists[token]) {
-            s_tokenExists[token] = true;
+        // Update token registry if new
+        if (!s_tokenAdded[token] && token != ETH) {
+            s_tokenAdded[token] = true;
+            s_tokenIndexes[token] = s_tokens.length;
             s_tokens.push(token);
         }
     }
@@ -382,6 +437,50 @@ contract Wallet is ReentrancyGuard {
         }
         // Emit an event to notify that the wallet balance has been unlocked.
         emit WalletBalanceUnlocked(msg.sender, usdAmount);
+    }
+
+    function addToken(
+        address tokenAddress
+    )
+        external
+        onlySigner
+        nonReentrant
+        tokenExists(tokenAddress)
+        tokenSupported(tokenAddress)
+        tokenNotAdded(tokenAddress)
+    {
+        s_tokenAdded[tokenAddress] = true;
+        s_tokenIndexes[tokenAddress] = s_tokens.length;
+        s_tokens.push(tokenAddress);
+    }
+
+    function removeToken(
+        address token
+    ) external onlySigner nonReentrant tokenAlreadyAdded(token) {
+        // Cache storage variables to memory for gas optimization
+        uint256 lastTokenIndex = s_tokens.length - 1;
+        address lastToken = s_tokens[lastTokenIndex];
+        uint256 removedTokenIndex = s_tokenIndexes[token];
+
+        // Remove token from existence mapping
+        s_tokenAdded[token] = false;
+
+        // Only perform swap if removed token is not already the last element
+        if (removedTokenIndex != lastTokenIndex) {
+            // Swap strategy: Move last element to removed token's position
+            s_tokens[removedTokenIndex] = lastToken;
+
+            // Update index mappings:
+            // 1. For the moved lastToken: new position = removed token's original position
+            // 2. For the removed token: position = invalid (marked non-existent)
+            s_tokenIndexes[lastToken] = removedTokenIndex;
+        }
+
+        // Always remove last array element (either duplicate or target)
+        s_tokens.pop();
+
+        // Cleanup index mapping for removed token (optional but recommended)
+        delete s_tokenIndexes[token];
     }
 
     /// @notice Creates a new transaction.
@@ -609,28 +708,45 @@ contract Wallet is ReentrancyGuard {
         return s_minimumApprovals;
     }
 
+    function getBalance(
+        address tokenAddress
+    ) public view returns (uint256 balance, uint256 balanceInUsd) {
+        IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
+            config.getPriceConsumer()
+        );
+        balance = tokenAddress == address(0)
+            ? address(this).balance
+            : IERC20(tokenAddress).balanceOf(address(this));
+        balanceInUsd = PriceUtils.getUsdValue(
+            tokenAddress,
+            balance,
+            priceConsumer
+        );
+    }
+
     /// @notice Returns the total balance of the wallet in USD
     /// @return usdTotal The total balance of the wallet in USD with 18 zeros (eg: 1 USD = 1,000,000,000,000,000,000 = 1e18)
     function getTotalBalanceInUsd() public view returns (uint256 usdTotal) {
+        address ETH = address(0);
+
+        IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
+            config.getPriceConsumer()
+        );
+
+        uint256 ethBalance = address(this).balance;
+        if (ethBalance > 0)
+            usdTotal += PriceUtils.getUsdValue(ETH, ethBalance, priceConsumer);
+
         address[] memory tokens = s_tokens;
         uint256 tokensLength = tokens.length;
         for (uint256 i = 0; i < tokensLength; i++) {
             address token = tokens[i];
-            bool isEtherToken = token == address(0);
 
-            uint256 balance = isEtherToken
-                ? address(this).balance
-                : IERC20(token).balanceOf(address(this));
-
-            IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
-                config.getPriceConsumer()
-            );
-            uint256 usdValue = PriceUtils.getUsdValue(
+            usdTotal += PriceUtils.getUsdValue(
                 token,
-                balance,
+                IERC20(token).balanceOf(address(this)),
                 priceConsumer
             );
-            usdTotal += usdValue;
         }
 
         return usdTotal;
@@ -651,8 +767,81 @@ contract Wallet is ReentrancyGuard {
         return s_signers;
     }
 
-    function getTokens() public view returns (address[] memory) {
-        return s_tokens;
+    function getTokenAddresses(
+        uint256 offset,
+        uint256 limit,
+        bool descending
+    ) public view returns (address[] memory results) {
+        uint256 tokensLength = s_tokens.length;
+        uint256 available = tokensLength > offset ? tokensLength - offset : 0;
+        uint256 size = available > limit ? limit : available;
+        results = new address[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            uint256 index;
+            if (descending) {
+                // Descending order: start from the newest (end of array) - offset
+                index = tokensLength - offset - i - 1;
+            } else {
+                // Ascending order: start from the oldest (beginning of array) + offset
+                index = offset + i;
+            }
+            results[i] = s_tokens[index];
+        }
+    }
+
+    function getToken(
+        address tokenAddress
+    ) public view returns (TokenView memory tokenView) {
+        try IERC20Metadata(tokenAddress).name() returns (
+            string memory /* name */
+        ) {
+            IDynamicPriceConsumer priceConsumer = IDynamicPriceConsumer(
+                config.getPriceConsumer()
+            );
+            return
+                TokenView({
+                    addr: tokenAddress,
+                    name: IERC20Metadata(tokenAddress).name(),
+                    symbol: IERC20Metadata(tokenAddress).symbol(),
+                    decimals: IERC20Metadata(tokenAddress).decimals(),
+                    balance: IERC20(tokenAddress).balanceOf(address(this)),
+                    balanceInUsd: PriceUtils.getUsdValue(
+                        tokenAddress,
+                        IERC20(tokenAddress).balanceOf(address(this)),
+                        priceConsumer
+                    ),
+                    priceInUsd: PriceUtils.getUsdPrice(
+                        tokenAddress,
+                        priceConsumer
+                    )
+                });
+        } catch {
+            revert TokenDoesNotExist();
+        }
+    }
+
+    function getTokens(
+        uint256 offset,
+        uint256 limit,
+        bool descending
+    ) public view returns (TokenView[] memory results) {
+        uint256 tokensLength = s_tokens.length;
+        uint256 available = tokensLength > offset ? tokensLength - offset : 0;
+        uint256 size = available > limit ? limit : available;
+        results = new TokenView[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            uint256 index;
+            if (descending) {
+                // Descending order: start from the newest (end of array) - offset
+                index = tokensLength - offset - i - 1;
+            } else {
+                // Ascending order: start from the oldest (beginning of array) + offset
+                index = offset + i;
+            }
+            results[i] = getToken(s_tokens[index]);
+        }
     }
 
     /**
