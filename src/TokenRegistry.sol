@@ -2,16 +2,21 @@
 pragma solidity ^0.8.20;
 
 import {Errors} from "src/Errors.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-contract TokenRegistry is Errors {
+contract TokenRegistry is Ownable, Errors {
     error TokenDoesNotExist();
 
     mapping(bytes32 name => address token) private s_tokens;
 
+    constructor() Ownable(msg.sender) {
+        //
+    }
+
     function setToken(
         string memory _name,
         address _token
-    ) external nonZeroAddress(_token) {
+    ) external onlyOwner nonZeroAddress(_token) {
         s_tokens[keccak256(abi.encodePacked(_name))] = _token;
     }
 
