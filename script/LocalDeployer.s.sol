@@ -12,7 +12,7 @@ import {MockWETH} from "test/mocks/MockWETH.sol";
 import {Script} from "forge-std/Script.sol";
 import {WalletFactory} from "src/WalletFactory.sol";
 
-contract AnvilDeployer is Script {
+contract LocalDeployer is Script {
     ContractRegistry private contractRegistry;
     TokenRegistry private tokenRegistry;
     PriceFeedRegistry private priceFeedRegistry;

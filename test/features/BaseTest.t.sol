@@ -8,7 +8,7 @@ import {WalletFactory} from "src/WalletFactory.sol";
 import {ContractRegistry} from "src/ContractRegistry.sol";
 import {TokenRegistry} from "src/TokenRegistry.sol";
 import {PriceFeedRegistry} from "src/PriceFeedRegistry.sol";
-import {AnvilDeployer} from "script/AnvilDeployer.s.sol";
+import {LocalDeployer} from "script/LocalDeployer.s.sol";
 
 /// @title Base Test Contract
 /// @notice This contract is used as a base for other test contracts
@@ -48,7 +48,7 @@ contract BaseTest is Test {
 
     function setUp() public virtual {
         // Deploy the HelperConfig contract
-        AnvilDeployer deployer = new AnvilDeployer();
+        LocalDeployer deployer = new LocalDeployer();
         contractRegistry = ContractRegistry(deployer.run());
 
         TokenRegistry tokenRegistry = TokenRegistry(
