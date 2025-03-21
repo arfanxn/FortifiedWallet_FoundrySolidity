@@ -178,10 +178,10 @@ contract Wallet is ReentrancyGuard {
         bytes32 indexed txHash,
         address indexed canceller
     );
-    /// @dev Emitted when the wallet receives Ether
-    event Deposited(address indexed sender, uint256 value);
+
     /// @dev Emitted when the wallet receives an ERC20 token
-    event ERC20Deposited(
+    /// @dev If `token` is `address(0)`, it means the deposited asset is Ether
+    event Deposited(
         address indexed sender,
         address indexed token,
         uint256 value
@@ -374,11 +374,11 @@ contract Wallet is ReentrancyGuard {
             // Validate ETH amount matches declared value
             if (msg.value != value) revert MustMatchEtherValue(); // ETH value mismatch
 
-            emit Deposited(msg.sender, value);
+            emit Deposited(msg.sender, ETH, value);
         } else {
             // Execute ERC20 transfer
             IERC20(token).safeTransferFrom(msg.sender, address(this), value);
-            emit ERC20Deposited(msg.sender, token, value);
+            emit Deposited(msg.sender, token, value);
         }
 
         // Update token registry if new
