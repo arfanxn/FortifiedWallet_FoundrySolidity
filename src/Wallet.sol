@@ -796,30 +796,29 @@ contract Wallet is ReentrancyGuard {
 
     function getToken(
         address tokenAddress
-    ) public view returns (TokenView memory tokenView) {
-        try IERC20Metadata(tokenAddress).name() returns (
-            string memory /* name */
-        ) {
-            AggregatorV3Interface priceFeed = i_priceFeedRegistry.getPriceFeed(
-                tokenAddress
-            );
-            return
-                TokenView({
-                    addr: tokenAddress,
-                    name: IERC20Metadata(tokenAddress).name(),
-                    symbol: IERC20Metadata(tokenAddress).symbol(),
-                    decimals: IERC20Metadata(tokenAddress).decimals(),
-                    balance: IERC20(tokenAddress).balanceOf(address(this)),
-                    balanceInUsd: PriceLibs.getScaledPriceXAmount(
-                        tokenAddress,
-                        IERC20(tokenAddress).balanceOf(address(this)),
-                        priceFeed
-                    ),
-                    priceInUsd: PriceLibs.getScaledPrice(priceFeed)
-                });
-        } catch {
-            revert TokenDoesNotExist();
-        }
+    )
+        public
+        view
+        tokenAlreadyAdded(tokenAddress)
+        returns (TokenView memory tokenView)
+    {
+        AggregatorV3Interface priceFeed = i_priceFeedRegistry.getPriceFeed(
+            tokenAddress
+        );
+        return
+            TokenView({
+                addr: tokenAddress,
+                name: IERC20Metadata(tokenAddress).name(),
+                symbol: IERC20Metadata(tokenAddress).symbol(),
+                decimals: IERC20Metadata(tokenAddress).decimals(),
+                balance: IERC20(tokenAddress).balanceOf(address(this)),
+                balanceInUsd: PriceLibs.getScaledPriceXAmount(
+                    tokenAddress,
+                    IERC20(tokenAddress).balanceOf(address(this)),
+                    priceFeed
+                ),
+                priceInUsd: PriceLibs.getScaledPrice(priceFeed)
+            });
     }
 
     function getTokens(
